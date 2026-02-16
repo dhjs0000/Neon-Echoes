@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TRG (Terminal Rhythm Game) - ANSI版本主程序
+Neon Echoes - ANSI版本主程序
 
 这个模块是游戏的入口点，使用ANSI转义序列进行渲染。
 """
@@ -76,13 +76,19 @@ from chart_parser import get_available_charts, load_chart_by_id
 from error_reporter import ErrorReporter
 
 
-class ANSITRG:
-    """ANSI TRG主游戏类 - 负责协调游戏的各个组件"""
+class NeonEchoes:
+    """Neon Echoes主游戏类 - 负责协调游戏的各个组件"""
     
-    def __init__(self):
+    def __init__(self, use_ansi: bool = True):
         """
-        初始化ANSI TRG游戏实例
+        初始化Neon Echoes游戏实例
+
+        Args:
+            use_ansi (bool): 是否使用ANSI颜色渲染，默认为True
         """
+        # 是否使用ANSI颜色
+        self.use_ansi = use_ansi
+
         # 初始化游戏组件
         self.game_state = GameState(difficulty=Difficulty.NORMAL)  # 默认使用NORMAL难度
         
@@ -106,7 +112,7 @@ class ANSITRG:
         self.is_paused = False  # 游戏暂停状态
         
         # 初始化logger
-        self.logger = logging.getLogger('TRG.MainANSI')
+        self.logger = logging.getLogger('NeonEchoes.MainANSI')
         self.logger.setLevel(logging.INFO)
         
         # 应用自动判定设置
@@ -523,7 +529,7 @@ class ANSITRG:
         """运行游戏主循环"""
         # 创建日志记录器
         import logging
-        self.logger = logging.getLogger('TRG.Main')
+        self.logger = logging.getLogger('NeonEchoes.Main')
         self.logger.setLevel(logging.INFO)
         
         # 配置文件日志 - 使用覆盖模式('w')
@@ -564,7 +570,7 @@ class ANSITRG:
         self.game_state.should_game_end = wrapped_should_game_end
         
         try:
-            self.logger.info("游戏启动")
+            self.logger.info("Neon Echoes 启动")
             
             while True:
                 try:
@@ -664,8 +670,8 @@ class ANSITRG:
                         print("游戏已暂停并切换到结算界面")
                         
         except KeyboardInterrupt:
-            self.logger.info("用户中断游戏")
-            print("\n游戏退出")
+            self.logger.info("用户中断 Neon Echoes")
+            print("\nNeon Echoes 退出")
         except Exception as e:
             import traceback
             error_info = traceback.format_exc()
@@ -685,7 +691,7 @@ class ANSITRG:
             else:
                 print(f"游戏严重错误（错误报告已禁用），请查看日志文件: {e}")
         finally:
-            self.logger.info("游戏结束")
+            self.logger.info("Neon Echoes 结束")
     
     def _handle_input(self, key: str) -> None:
         """
@@ -945,8 +951,9 @@ def main():
     import argparse
     
     # 创建参数解析器
-    parser = argparse.ArgumentParser(description='TRG (Terminal Rhythm Game)')
+    parser = argparse.ArgumentParser(description='Neon Echoes - 终端下落式音游')
     parser.add_argument('--chart', type=str, help='直接加载指定的谱面ID')
+    parser.add_argument('-N', '--No_ANSI', action='store_true', help='不使用ANSI颜色渲染，只使用白色字符（提高兼容性）')
     
     # 解析命令行参数
     args = parser.parse_args()
@@ -959,7 +966,8 @@ def main():
     
     try:
         # 创建并运行游戏
-        game = ANSITRG()
+        use_ansi = not args.No_ANSI
+        game = NeonEchoes(use_ansi=use_ansi)
         
         # 如果指定了谱面ID，直接开始游戏
         if args.chart:

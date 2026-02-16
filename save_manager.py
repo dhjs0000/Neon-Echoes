@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TRG (Terminal Rhythm Game) - 存档管理模块（单文件版）
+Neon Echoes - 存档管理模块（单文件版）
 
 这个模块负责游戏成绩的保存、加密和读取功能，采用单文件存储所有谱面的最高分。
 """

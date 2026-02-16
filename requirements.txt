@@ -1,7 +1,7 @@
-# TRG (Terminal Rhythm Game) 依赖库列表
+# Neon Echoes 依赖库列表
 
-# 用于GUI开发(当然，如果你不需要使用制谱器，那也就不用安装此库)
-PyQt5>=5.15.0
+# 用于GUI开发(制谱器使用)
+PySide6>=6.4.0
 
 # 用于音频播放
 pygame>=2.0.0

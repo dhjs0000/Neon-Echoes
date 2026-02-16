@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TRG (Terminal Rhythm Game) - 错误报告模块
+Neon Echoes - 错误报告模块
 
 这个模块负责收集错误日志和系统信息，并在发生错误时提供用户友好的错误报告功能。
 """
@@ -15,7 +15,7 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-logger = logging.getLogger('TRG.ErrorReporter')
+logger = logging.getLogger('NeonEchoes.ErrorReporter')
 logger.setLevel(logging.INFO)
 
 if logger.handlers:
@@ -172,7 +172,7 @@ class ErrorReporter:
         """
         return """=== 错误报告提交说明 ===
 
-感谢您使用TRG终端音游并帮助我们改进游戏！
+感谢您使用Neon Echoes并帮助我们改进游戏！
 
 【提交错误的方法】
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TRG (Terminal Rhythm Game) - ANSI渲染器模块
+Neon Echoes - ANSI渲染器模块
 
 这个模块负责使用ANSI转义序列在终端中绘制游戏画面，包括背景、音符、判定线和用户界面元素。
 """
@@ -79,37 +79,77 @@ class ANSIRenderer:
     
     def _get_terminal_size(self) -> Tuple[int, int]:
         """获取终端尺寸"""
-        rows, columns = os.popen('stty size', 'r').read().split() if os.name != 'nt' else (24, 80)
-        return int(rows), int(columns)
+        try:
+            if os.name != 'nt':
+                # Unix/Linux/Mac
+                rows, columns = os.popen('stty size', 'r').read().split()
+                return int(rows), int(columns)
+            else:
+                # Windows
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+                csbi = ctypes.create_string_buffer(22)
+                kernel32.GetConsoleScreenBufferInfo(handle, csbi)
+                rows = csbi[10] - csbi[9]  # srWindow.Bottom - srWindow.Top + 1
+                columns = csbi[12] - csbi[11]  # srWindow.Right - srWindow.Left + 1
+                return rows, columns
+        except:
+            # 如果获取失败，返回较大的默认值
+            return 40, 120
+
+    def update_terminal_size(self) -> None:
+        """更新终端尺寸"""
+        self.screen_height, self.screen_width = self._get_terminal_size()
+        self.judgement_line_y = self.screen_height - 5
+        self._calculate_track_dimensions()
+        self._cache_track_positions()
+        # 重新初始化屏幕缓冲区
+        self.screen_buffer = [[' ' for _ in range(self.screen_width)] for _ in range(self.screen_height)]
+        self.color_buffer = [[self.COLOR_CODES['reset'] for _ in range(self.screen_width)] for _ in range(self.screen_height)]
     
     def _calculate_track_dimensions(self) -> None:
         """动态计算轨道宽度和间距，使总宽度与屏幕宽度相等或相近"""
         # 确保屏幕宽度有效
         if self.screen_width <= 0:
             self.track_width = 6
-            self.track_spacing = 5
+            self.track_spacing = 2
             return
-        
+
         # 计算可用总宽度（减去边界占用的字符）
-        total_width_needed = self.screen_width - 5  # 留出一点余量
-        
+        total_width_needed = self.screen_width - 4  # 留出一点余量
+
         # 计算轨道宽度：总宽度减去所有轨道间距后的平均宽度
         # 轨道间距数量 = 轨道数量 - 1
         spacing_count = self.num_tracks - 1
-        
-        # 每个轨道间距至少为1个字符
+
+        # 每个轨道间距至少为2个字符
         min_spacing = 2
+
+        # 计算基础轨道宽度
         available_track_width = total_width_needed - (spacing_count * min_spacing)
-        
-        # 计算每个轨道的宽度
-        self.track_width = max(3, available_track_width // self.num_tracks)  # 确保每个轨道至少有3个字符宽
-        
+        base_track_width = available_track_width // self.num_tracks
+
+        # 根据屏幕宽度动态调整轨道宽度
+        if self.screen_width >= 120:
+            # 大窗口：使用较宽的轨道
+            self.track_width = max(5, base_track_width)
+        elif self.screen_width >= 80:
+            # 中等窗口：使用中等宽度
+            self.track_width = max(4, base_track_width)
+        else:
+            # 小窗口：使用较窄的轨道
+            self.track_width = max(3, base_track_width)
+
         # 重新计算轨道间距，使总宽度与屏幕宽度尽量接近
         actual_total_width = self.num_tracks * self.track_width
         remaining_space = total_width_needed - actual_total_width
-        
+
         if spacing_count > 0:
+            # 在轨道之间均匀分配剩余空间
             self.track_spacing = min_spacing + (remaining_space // spacing_count)
+            # 确保间距至少为最小值
+            self.track_spacing = max(min_spacing, self.track_spacing)
         else:
             self.track_spacing = 0
     

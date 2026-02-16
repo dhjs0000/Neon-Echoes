@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TRG (Terminal Rhythm Game) - 谱面解析器模块
+Neon Echoes - 谱面解析器模块
 
 这个模块负责解析.chart格式的谱面文件，将其转换为游戏引擎可以理解的数据结构。
 """
@@ -13,7 +13,7 @@ from enum import Enum
 
 # 配置日志
 # 创建logger实例
-logger = logging.getLogger('TRG.ChartParser')
+logger = logging.getLogger('NeonEchoes.ChartParser')
 logger.setLevel(logging.INFO)
 
 # 清除现有的处理器
@@ -296,7 +296,7 @@ class ChartParser:
                 # 轨道编号从1开始，转换为0-based索引
                 if len(parts) > 0:
                     track_index = int(parts[0]) - 1
-                    if 0 <= track_index < 4:
+                    if 0 <= track_index < 10:
                         # 计算音符的预计判定时间
                         perfect_time = self._calculate_judgment_time()
                         
@@ -323,7 +323,7 @@ class ChartParser:
             try:
                 if len(parts) > 0:
                     track_index = int(parts[0]) - 1
-                    if 0 <= track_index < 4:
+                    if 0 <= track_index < 10:
                         # 长按长度（行）转换为时间（毫秒）
                         # 假设每行占用的时间为 1000/speed 毫秒
                         duration_lines = 1.0  # 默认1行
@@ -363,7 +363,7 @@ class ChartParser:
             try:
                 if len(parts) > 0:
                     track_index = int(parts[0]) - 1
-                    if 0 <= track_index < 4:
+                    if 0 <= track_index < 10:
                         # 忽略目标轨道参数，drag音符不需要目标轨道
                         
                         # 计算音符的预计判定时间

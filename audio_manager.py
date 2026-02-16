@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TRG (Terminal Rhythm Game) - 音频管理器模块
+Neon Echoes - 音频管理器模块
 
 这个模块负责处理游戏中的音频播放和精确的时间同步，使用pygame.mixer库实现。
 """
@@ -12,7 +12,7 @@ import logging
 from typing import Optional, Dict
 
 # 配置日志
-logger = logging.getLogger('TRG.AudioManager')
+logger = logging.getLogger('NeonEchoes.AudioManager')
 logger.setLevel(logging.INFO)
 
 # 清除现有的处理器

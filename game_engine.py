@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TRG (Terminal Rhythm Game) - 游戏引擎模块
+Neon Echoes - 游戏引擎模块
 
 这个模块包含游戏的核心逻辑类，负责管理游戏状态、音符判定和分数计算等功能。
 """
@@ -20,7 +20,7 @@ from audio_manager import AudioManager
 
 # 配置日志
 # 创建logger实例
-logger = logging.getLogger('TRG.GameEngine')
+logger = logging.getLogger('NeonEchoes.GameEngine')
 logger.setLevel(logging.INFO)
 
 # 清除现有的处理器
