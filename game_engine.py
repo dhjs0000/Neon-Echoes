@@ -594,8 +594,16 @@ class GameState:
                             # 轨道未被按下，判定为MISS
                             self._judge_miss(note)
         
-        # 更新所有活跃音符的状态
-        for note in self.notes[:]:  # 使用副本避免在迭代中修改列表
+        # 更新所有活跃音符的状态 - 优化：只处理时间窗口内的音符
+        # 计算时间窗口：当前时间前后各3秒（足够覆盖所有判定窗口和可见范围）
+        time_window_start = self.current_time_ms - 3000
+        time_window_end = self.current_time_ms + 3000
+        
+        # 使用列表推导式快速过滤需要处理的音符
+        notes_to_process = [note for note in self.notes 
+                           if time_window_start <= note.perfect_time <= time_window_end]
+        
+        for note in notes_to_process:
             try:
                 # 获取对应轨道的激活状态
                 activated = self.check_track_state(note.track_index)

@@ -14,7 +14,10 @@ import traceback
 import datetime
 import platform
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
+
+# 导入多线程输入处理器
+from input_handler import ThreadedInputHandler, InputEvent
 
 # 启动时错误处理 - 在任何模块导入之前设置
 def handle_startup_error(exc_type, exc_value, exc_traceback):
@@ -41,21 +44,9 @@ def handle_startup_error(exc_type, exc_value, exc_traceback):
             f.write(f"Python版本: {platform.python_version()}\n")
             f.write(f"工作目录: {os.getcwd()}\n")
 
-        print(f"\n⚠️  启动时发生错误！\n")
-        print(f"错误类型: {exc_type.__name__}")
-        print(f"错误信息: {exc_value}")
-        print(f"\n错误详情已保存到: {error_log_path}")
-        print(f"\n请查看错误日志并提交Bug报告。\n")
-
-        # 提交说明
-        print("=== 如何提交错误报告 ===")
-        print("方法1：通过GitHub提交Issue")
-        print("方法2：发送邮件到游戏开发者邮箱")
-        print("详细说明请查看 error_log 文件\n")
-
     except Exception as e:
-        print(f"无法创建错误报告: {e}")
-        print(f"原始错误: {error_msg}")
+        # 静默处理，避免终端输出
+        pass
 
 # 设置全局异常处理器
 sys.excepthook = handle_startup_error
@@ -168,8 +159,28 @@ class NeonEchoes:
         self.pressed_keys = set()  # 记录当前按下的轨道按键
         self.no_input_frames = 0  # 连续没有按键输入的帧数
         
+        # 缓存VK键码，避免每次调用都重新定义
+        self._vk_keys_cache = {
+            'q': 0x51, 'a': 0x41, 'z': 0x5A,
+            'w': 0x57, 's': 0x53, 'x': 0x58,
+            'e': 0x45, 'd': 0x44, 'c': 0x43,
+            'r': 0x52, 'f': 0x46, 'v': 0x56,
+            't': 0x54, 'g': 0x47, 'b': 0x42,
+            'y': 0x59, 'h': 0x48, 'n': 0x4E,
+            'u': 0x55, 'j': 0x4A, 'm': 0x4D,
+            'i': 0x49, 'k': 0x4B, ',': 0xBC,
+            'o': 0x4F, 'l': 0x4C, '.': 0xBE,
+            'p': 0x50, ';': 0xBA, "'": 0xDE,
+            ' ': 0x20
+        }
+        
         # 当前选中的谱面
         self.selected_chart = None
+        
+        # 初始化多线程输入处理器
+        self.input_handler = ThreadedInputHandler(self.key_mapping, self._vk_keys_cache)
+        self.input_handler.on_key_down = self._on_key_down
+        self.input_handler.on_key_up = self._on_key_up
         
         # 设置TUI管理器的回调函数
         self.tui_manager.set_on_chart_select_callback(self.on_chart_selected)
@@ -201,13 +212,13 @@ class NeonEchoes:
             bool: 加载是否成功
         """
         try:
-            print(f"开始加载谱面ID: {chart_id}")
+            self.logger.info(f"开始加载谱面ID: {chart_id}")
             # 首先停止任何正在播放的音频
             self.audio_manager.stop()
             
             chart_data = load_chart_by_id(chart_id)
             if not chart_data:
-                print(f"未找到谱面ID: {chart_id}")
+                self.logger.warning(f"未找到谱面ID: {chart_id}")
                 return False
             
             self.game_state.load_chart(chart_data)
@@ -217,10 +228,10 @@ class NeonEchoes:
             audio_file = None
             if 'audio_file' in chart_data and chart_data['audio_file']:
                 audio_file = chart_data['audio_file']
-                print(f"在chart文件中找到音频文件(audio_file): {audio_file}")
+                self.logger.info(f"在chart文件中找到音频文件(audio_file): {audio_file}")
             elif 'audio' in chart_data and chart_data['audio']:
                 audio_file = chart_data['audio']
-                print(f"在chart文件中找到音频文件(audio): {audio_file}")
+                self.logger.info(f"在chart文件中找到音频文件(audio): {audio_file}")
                 
             if audio_file:
                 # 构建基础路径
@@ -229,41 +240,37 @@ class NeonEchoes:
                 
                 # 尝试直接加载
                 audio_path = os.path.join(audio_dir, audio_file)
-                print(f"尝试加载路径: {audio_path}")
+                self.logger.info(f"尝试加载路径: {audio_path}")
                 
                 # 如果文件不存在，尝试去掉"audio-"前缀
                 if not os.path.exists(audio_path) and audio_file.startswith("audio-"):
                     alt_audio_file = audio_file[6:]  # 去掉"audio-"前缀
                     audio_path = os.path.join(audio_dir, alt_audio_file)
-                    print(f"文件不存在，尝试去掉前缀后的路径: {audio_path}")
+                    self.logger.info(f"文件不存在，尝试去掉前缀后的路径: {audio_path}")
                 
                 if os.path.exists(audio_path):
-                    print(f"音频文件存在，尝试加载...")
+                    self.logger.info(f"音频文件存在，尝试加载...")
                     # 记录音频初始化状态
-                    print(f"音频系统初始化状态: {self.audio_manager.audio_available}")
+                    self.logger.info(f"音频系统初始化状态: {self.audio_manager.audio_available}")
                     success = self.audio_manager.load_music(audio_path)
-                    print(f"音频加载结果: {'成功' if success else '失败'}")
+                    self.logger.info(f"音频加载结果: {'成功' if success else '失败'}")
                 else:
-                    print(f"警告: 音频文件不存在 - {audio_path}")
+                    self.logger.warning(f"音频文件不存在 - {audio_path}")
                     # 当音频文件不存在时，停止之前播放的音频
                     self.audio_manager.stop()
                     # 列出audio目录中的文件，帮助诊断
                     if os.path.exists(audio_dir):
-                        print(f"audio目录中的文件:")
-                        for file in os.listdir(audio_dir):
-                            print(f"  - {file}")
+                        self.logger.info(f"audio目录中的文件: {os.listdir(audio_dir)}")
                     else:
-                        print(f"错误: audio目录不存在")
+                        self.logger.error(f"audio目录不存在")
             else:
-                print("chart文件中未指定音频文件")
+                self.logger.info("chart文件中未指定音频文件")
                 # 当谱面没有音频文件时，停止之前播放的音频
                 self.audio_manager.stop()
             
             return True
         except Exception as e:
-            print(f"加载谱面失败: {e}")
-            import traceback
-            traceback.print_exc()
+            self.logger.error(f"加载谱面失败: {e}", exc_info=True)
             return False
     
     def on_chart_selected(self, chart: Dict[str, str]) -> None:
@@ -273,24 +280,24 @@ class NeonEchoes:
         Args:
             chart (Dict[str, str]): 选中的谱面信息
         """
-        print(f"选择谱面: {chart}")  # 添加日志输出
+        self.logger.info(f"选择谱面: {chart}")
         self.selected_chart = chart
         
         # 加载选中的谱面
         if chart and 'id' in chart:
-            print(f"尝试加载谱面ID: {chart['id']}")  # 添加日志输出
+            self.logger.info(f"尝试加载谱面ID: {chart['id']}")
             if self.load_chart(chart['id']):
                 # 确保应用当前的auto play和调试计时器设置
                 self.game_state.set_autoplay(self.settings.get('autoplay', False))
                 self.game_state.set_debug_timer(self.settings.get('debug_timer', False))
                 
                 # 加载成功，进入游戏界面
-                print("谱面加载成功，进入游戏界面")  # 添加日志输出
+                self.logger.info("谱面加载成功，进入游戏界面")
                 self.tui_manager.set_state(ANSITUIManager.UIState.GAME_PLAY)
                 self.game_state.start_game()
                 self.audio_manager.play()
             else:
-                print("谱面加载失败")
+                self.logger.error("谱面加载失败")
         
     def on_pause_action(self, action: int) -> None:
         """
@@ -370,6 +377,38 @@ class NeonEchoes:
         if 'debug_timer' in self.settings:
             self.game_state.set_debug_timer(self.settings['debug_timer'])
     
+    def _on_key_down(self, key: str, track_index: int) -> None:
+        """
+        多线程输入处理器的按键按下回调
+        
+        Args:
+            key (str): 按下的键
+            track_index (int): 对应的轨道索引
+        """
+        # 添加到已按下键集合
+        self.pressed_keys.add(key)
+        
+        # 如果在游戏状态，处理按键
+        if self.tui_manager.current_state == ANSITUIManager.UIState.GAME_PLAY:
+            if track_index < 10:  # 轨道按键
+                self.game_state.down(track_index)
+    
+    def _on_key_up(self, key: str, track_index: int) -> None:
+        """
+        多线程输入处理器的按键释放回调
+        
+        Args:
+            key (str): 释放的键
+            track_index (int): 对应的轨道索引
+        """
+        # 从已按下键集合中移除
+        self.pressed_keys.discard(key)
+        
+        # 如果在游戏状态，处理按键释放
+        if self.tui_manager.current_state == ANSITUIManager.UIState.GAME_PLAY:
+            if track_index < 10:  # 轨道按键
+                self.game_state.up(track_index)
+    
     def _on_game_over(self, stats):
         """游戏结束回调"""
         # 保存成绩
@@ -414,20 +453,19 @@ class NeonEchoes:
             # 运行游戏循环
             self.run()
         else:
-            print(f"无法加载谱面: {chart_id}")
+            self.logger.error(f"无法加载谱面: {chart_id}")
 
-    def _check_input(self) -> Optional[str]:
+    def _check_input_menu(self) -> Optional[str]:
         """
-        检查用户输入（非阻塞）
+        检查菜单界面的用户输入（非阻塞）
         
         Returns:
             Optional[str]: 用户按下的键，如果没有输入则返回None
         """
         if os.name == 'nt':  # Windows
             import msvcrt
-            import ctypes
             
-            # 首先检查是否有新的按键输入
+            # 检查是否有新的按键输入
             if msvcrt.kbhit():
                 ch = msvcrt.getch()
                 # 检查是否是特殊键（第一个字节是0x00或0xe0）
@@ -458,65 +496,6 @@ class NeonEchoes:
                     except UnicodeDecodeError:
                         # 如果UTF-8解码失败，尝试使用latin-1解码
                         return ch.decode('latin-1')
-            
-            # 重要修复：使用Windows API直接检查按键状态，以实现多键同时按下的正确处理
-            # 定义Windows API调用
-            user32 = ctypes.windll.user32
-            VK_KEYS = {
-                # 轨道0: qaz
-                'q': 0x51,
-                'a': 0x41,
-                'z': 0x5A,
-                # 轨道1: wsx
-                'w': 0x57,
-                's': 0x53,
-                'x': 0x58,
-                # 轨道2: edc
-                'e': 0x45,
-                'd': 0x44,
-                'c': 0x43,
-                # 轨道3: rfv
-                'r': 0x52,
-                'f': 0x46,
-                'v': 0x56,
-                # 轨道4: tgb
-                't': 0x54,
-                'g': 0x47,
-                'b': 0x42,
-                # 轨道5: yhn
-                'y': 0x59,
-                'h': 0x48,
-                'n': 0x4E,
-                # 轨道6: ujm
-                'u': 0x55,
-                'j': 0x4A,
-                'm': 0x4D,
-                # 轨道7: ik,
-                'i': 0x49,
-                'k': 0x4B,
-                ',': 0xBC,
-                # 轨道8: ol.
-                'o': 0x4F,
-                'l': 0x4C,
-                '.': 0xBE,
-                # 轨道9: p;'
-                'p': 0x50,
-                ';': 0xBA,
-                "'": 0xDE,
-                # 空格
-                ' ': 0x20
-            }
-            
-            # 检查当前pressed_keys中的键是否仍然被按下
-            # 我们需要创建一个副本，因为在遍历时可能会修改集合
-            keys_to_check = list(self.pressed_keys)
-            for key in keys_to_check:
-                if key in VK_KEYS:
-                    # 使用GetAsyncKeyState检查键的状态
-                    # 如果最高位为0，表示键未被按下
-                    if (user32.GetAsyncKeyState(VK_KEYS[key]) & 0x8000) == 0:
-                        # 键已松开，调用松开处理方法
-                        self._handle_key_release(key)
             
             return None
         else:  # Unix/Linux
@@ -572,23 +551,25 @@ class NeonEchoes:
         try:
             self.logger.info("Neon Echoes 启动")
             
+            # 启动多线程输入处理器
+            self.input_handler.start()
+            
+            # 初始化性能监控
+            self._frame_times = []
+            
             while True:
+                # 记录帧开始时间
+                frame_start_time = time.time()
                 try:
-                    # 检查用户输入
-                    key = self._check_input()
-                    if key:
-                        self._handle_input(key)
-                    
-                    # 如果在游戏状态中，处理按键状态
-                    if self.tui_manager.current_state == ANSITUIManager.UIState.GAME_PLAY:
-                        # 重要修复：在Windows非阻塞输入模式下，我们需要特殊处理多键同时按下
-                        # 1. 每帧重新激活所有已按下的轨道，确保持续按住状态
-                        for pressed_key in self.pressed_keys:
-                            if pressed_key in self.key_mapping:
-                                track_index = self.key_mapping[pressed_key]
-                                if track_index < 10:  # 轨道按键
-                                    # 每帧重新激活轨道，保持持续按住的状态
-                                    self.game_state.down(track_index)
+                    # 处理输入事件（从多线程输入处理器）
+                    # 获取所有待处理的输入事件
+                    while not self.input_handler.event_queue.empty():
+                        try:
+                            event = self.input_handler.event_queue.get_nowait()
+                            if event.event_type == InputEvent.KEY_DOWN:
+                                self._handle_input(event.key)
+                        except:
+                            break
                     
                     # 根据当前状态更新界面
                     if self.tui_manager.current_state == ANSITUIManager.UIState.MAIN_MENU:
@@ -641,8 +622,19 @@ class NeonEchoes:
                     elif self.tui_manager.current_state == ANSITUIManager.UIState.SETTINGS:
                         self.tui_manager.draw_settings()
                     
-                    # 控制帧率
-                    time.sleep(self.frame_time)
+                    # 控制帧率 - 使用更精确的帧率控制
+                    elapsed = time.time() - frame_start_time
+                    sleep_time = self.frame_time - elapsed
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+                    
+                    # 记录帧时间用于性能监控
+                    frame_end_time = time.time()
+                    actual_frame_time = frame_end_time - frame_start_time
+                    if hasattr(self, '_frame_times'):
+                        self._frame_times.append(actual_frame_time)
+                        if len(self._frame_times) > 60:  # 只保留最近60帧
+                            self._frame_times.pop(0)
                     
                 except Exception as frame_error:
                     # 捕获每帧的错误，记录日志并继续
@@ -658,20 +650,19 @@ class NeonEchoes:
                             traceback_info=error_info
                         )
                         if report_path:
-                            # 显示给用户
+                            # 记录到日志
                             user_instructions = self.error_reporter.get_user_instructions(report_path)
-                            print(user_instructions)
+                            self.logger.info(f"错误报告已创建: {user_instructions}")
                     else:
-                        print(f"发生错误（错误报告已禁用）: {frame_error}")
+                        self.logger.error(f"发生错误（错误报告已禁用）: {frame_error}")
 
                     # 尝试恢复到安全状态
                     if self.tui_manager.current_state == ANSITUIManager.UIState.GAME_PLAY:
                         self.tui_manager.set_state(ANSITUIManager.UIState.GAME_RESULT)
-                        print("游戏已暂停并切换到结算界面")
+                        self.logger.info("游戏已暂停并切换到结算界面")
                         
         except KeyboardInterrupt:
             self.logger.info("用户中断 Neon Echoes")
-            print("\nNeon Echoes 退出")
         except Exception as e:
             import traceback
             error_info = traceback.format_exc()
@@ -685,12 +676,15 @@ class NeonEchoes:
                     traceback_info=error_info
                 )
                 if report_path:
-                    # 显示给用户
+                    # 记录到日志
                     user_instructions = self.error_reporter.get_user_instructions(report_path)
-                    print(user_instructions)
+                    self.logger.info(f"错误报告已创建: {user_instructions}")
             else:
-                print(f"游戏严重错误（错误报告已禁用），请查看日志文件: {e}")
+                self.logger.error(f"游戏严重错误（错误报告已禁用）: {e}")
         finally:
+            # 停止多线程输入处理器
+            if hasattr(self, 'input_handler'):
+                self.input_handler.stop()
             self.logger.info("Neon Echoes 结束")
     
     def _handle_input(self, key: str) -> None:

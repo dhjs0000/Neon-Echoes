@@ -8,7 +8,29 @@ Neon Echoes - ANSI TUI管理器模块
 import os
 import sys
 import re
+import logging
 from typing import Dict, List, Optional, Callable
+
+# 配置日志
+logger = logging.getLogger('NeonEchoes.ANSITUIManager')
+logger.setLevel(logging.DEBUG)
+
+# 清除现有的处理器
+if logger.handlers:
+    logger.handlers.clear()
+
+# 创建文件处理器 - 使用覆盖模式('w')
+log_file = os.path.join(os.path.dirname(__file__), 'logs', 'tui_manager_log.log')
+file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
+file_handler.setLevel(logging.DEBUG)
+
+# 设置日志格式
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+
+# 添加处理器到logger
+logger.addHandler(file_handler)
+logger.info("ANSITUIManager 日志系统初始化完成")
 
 
 class ANSITUIManager:
@@ -30,7 +52,7 @@ class ANSITUIManager:
     
     # ASCII艺术字 - Neon Echoes
     TRG_ASCII_ART = [
-        "███╗   ██╗███████╗ ██████╗ ███╗   ██╗    ███████╗ ██████╗██╗  ██╗ ██████╗ ███████╗███████╗ ",
+        " ███╗   ██╗███████╗ ██████╗ ███╗   ██╗    ███████╗ ██████╗██╗  ██╗ ██████╗ ███████╗███████╗ ",
         " ████╗  ██║██╔════╝██╔═══██╗████╗  ██║    ██╔════╝██╔════╝██║  ██║██╔═══██╗██╔════╝██╔════╝ ",
         " ██╔██╗ ██║█████╗  ██║   ██║██╔██╗ ██║    █████╗  ██║     ███████║██║   ██║█████╗  ███████╗ ",
         " ██║╚██╗██║██╔══╝  ██║   ██║██║╚██╗██║    ██╔══╝  ██║     ██╔══██║██║   ██║██╔══╝  ╚════██║ ",
@@ -53,11 +75,17 @@ class ANSITUIManager:
         Args:
             settings: 游戏设置字典
         """
+        logger.info("=" * 60)
+        logger.info("ANSITUIManager 初始化开始")
+        logger.info("=" * 60)
+        
         # 获取终端尺寸
         self.screen_height, self.screen_width = self._get_terminal_size()
+        logger.info(f"终端尺寸: {self.screen_width}x{self.screen_height}")
         
         # 设置初始UI状态
         self.current_state = self.UIState.MAIN_MENU
+        logger.info(f"初始UI状态: MAIN_MENU ({self.UIState.MAIN_MENU})")
         
         # 设置相关属性
         self.settings = settings if settings else {
@@ -74,6 +102,10 @@ class ANSITUIManager:
             },
             'autoplay': False         # 自动判定模式
         }
+        logger.debug(f"设置加载完成: music_volume={self.settings['music_volume']}, "
+                    f"sfx_volume={self.settings['sfx_volume']}, "
+                    f"fps={self.settings['fps']}, "
+                    f"autoplay={self.settings['autoplay']}")
         
         # 设置界面选项
         self.setting_options = [
@@ -87,24 +119,29 @@ class ANSITUIManager:
             "清空数据",
             "返回主菜单"
         ]
+        logger.debug(f"设置选项数量: {len(self.setting_options)}")
         
         # 初始化设置选项的值显示格式
         self._update_setting_value_formats()
+        logger.debug("设置选项值显示格式初始化完成")
         
         # 清空数据确认状态
         self.confirming_clear_data = False
         
         # 初始化自动判定状态
         self.autoplay_enabled = self.settings.get('autoplay', False)
+        logger.info(f"自动判定模式: {'开启' if self.autoplay_enabled else '关闭'}")
         
         # 选谱菜单状态
         self.selected_chart_index = 0
         self.current_page = 0
         self.charts_per_page = 4  # 修改为每页最多4个条目
         self.available_charts = []
+        logger.debug(f"选谱菜单初始化: charts_per_page={self.charts_per_page}")
         
         # 设置界面选项
         self.selected_setting_option = 0  # 当前选中的设置选项
+        logger.debug(f"设置界面选项索引初始化: {self.selected_setting_option}")
         
         # 暂停菜单选项
         self.pause_menu_options = [
@@ -113,6 +150,7 @@ class ANSITUIManager:
             "返回主菜单"
         ]
         self.selected_pause_option = 0
+        logger.debug(f"暂停菜单选项: {self.pause_menu_options}")
         
         # 结算界面数据
         self.game_result_data = {
@@ -123,20 +161,63 @@ class ANSITUIManager:
             'max_combo': 0,
             'accuracy': 0.0
         }
+        logger.debug("结算界面数据初始化完成")
         
         # 回调函数
         self.on_chart_select = None  # 选择谱面的回调
         self.on_pause_action = None  # 暂停菜单操作的回调
         self.on_settings_changed = None  # 设置更改的回调
         self.on_result_action = None  # 结算界面操作的回调
+        logger.debug("回调函数初始化完成")
+        
+        logger.info("=" * 60)
+        logger.info("ANSITUIManager 初始化完成")
+        logger.info("=" * 60)
     
     def _get_terminal_size(self) -> tuple:
         """获取终端尺寸"""
+        logger.debug("获取终端尺寸...")
         try:
-            rows, columns = os.popen('stty size', 'r').read().split() if os.name != 'nt' else (24, 80)
-            return int(rows), int(columns)
-        except:
-            return 24, 80  # 默认尺寸
+            if os.name != 'nt':
+                # Unix/Linux/Mac
+                rows, columns = os.popen('stty size', 'r').read().split()
+                size = (int(rows), int(columns))
+                logger.info(f"Unix/Linux/Mac 终端尺寸: {size[1]}x{size[0]}")
+                return size
+            else:
+                # Windows - 使用Windows API获取实际终端尺寸
+                import ctypes
+                from ctypes import wintypes
+                
+                kernel32 = ctypes.windll.kernel32
+                handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+                
+                # 定义 CONSOLE_SCREEN_BUFFER_INFO 结构
+                class COORD(ctypes.Structure):
+                    _fields_ = [("X", wintypes.SHORT), ("Y", wintypes.SHORT)]
+                
+                class SMALL_RECT(ctypes.Structure):
+                    _fields_ = [("Left", wintypes.SHORT), ("Top", wintypes.SHORT),
+                               ("Right", wintypes.SHORT), ("Bottom", wintypes.SHORT)]
+                
+                class CONSOLE_SCREEN_BUFFER_INFO(ctypes.Structure):
+                    _fields_ = [("dwSize", COORD), ("dwCursorPosition", COORD),
+                               ("wAttributes", wintypes.WORD), ("srWindow", SMALL_RECT),
+                               ("dwMaximumWindowSize", COORD)]
+                
+                csbi = CONSOLE_SCREEN_BUFFER_INFO()
+                kernel32.GetConsoleScreenBufferInfo(handle, ctypes.byref(csbi))
+                
+                # 计算窗口尺寸
+                rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1
+                columns = csbi.srWindow.Right - csbi.srWindow.Left + 1
+                size = (rows, columns)
+                logger.info(f"Windows 终端尺寸: {size[1]}x{size[0]}")
+                return size
+        except Exception as e:
+            # 如果获取失败，返回较大的默认值
+            logger.warning(f"获取终端尺寸失败: {e}, 使用默认值 160x40")
+            return 40, 160
     
     def _update_setting_value_formats(self) -> None:
         """
@@ -162,26 +243,40 @@ class ANSITUIManager:
             option_index: 选项索引
             direction: 调整方向 (-1 减少, 1 增加)
         """
+        option_name = self.setting_options[option_index] if 0 <= option_index < len(self.setting_options) else "未知"
+        logger.debug(f"调整设置: option_index={option_index} ({option_name}), direction={direction}")
+        
         if option_index == 0:  # 音乐音量
+            old_value = self.settings['music_volume']
             self.settings['music_volume'] = max(0.0, min(1.0, self.settings['music_volume'] + 0.1 * direction))
+            logger.info(f"音乐音量: {old_value:.1f} -> {self.settings['music_volume']:.1f}")
         elif option_index == 1:  # 音效音量
+            old_value = self.settings['sfx_volume']
             self.settings['sfx_volume'] = max(0.0, min(1.0, self.settings['sfx_volume'] + 0.1 * direction))
+            logger.info(f"音效音量: {old_value:.1f} -> {self.settings['sfx_volume']:.1f}")
         elif option_index == 2:  # 音乐延迟（每10ms为步长，范围-1000到1000）
-            current_delay = self.settings.get('music_delay', 0)
-            new_delay = current_delay + 10 * direction
+            old_value = self.settings.get('music_delay', 0)
+            new_delay = old_value + 10 * direction
             self.settings['music_delay'] = max(-1000, min(1000, new_delay))
+            logger.info(f"音乐延迟: {old_value}ms -> {self.settings['music_delay']}ms")
         elif option_index == 3:  # 帧率设置
             fps_options = [30, 60, 120, 144]
-            current_fps_index = fps_options.index(self.settings['fps']) if self.settings['fps'] in fps_options else 1
+            old_fps = self.settings['fps']
+            current_fps_index = fps_options.index(old_fps) if old_fps in fps_options else 1
             new_fps_index = max(0, min(len(fps_options) - 1, current_fps_index + direction))
             self.settings['fps'] = fps_options[new_fps_index]
+            logger.info(f"帧率设置: {old_fps} FPS -> {self.settings['fps']} FPS")
         elif option_index == 4:  # 自动判定模式
             # 切换自动判定模式状态
-            self.settings['autoplay'] = not self.settings.get('autoplay', False)
+            old_value = self.settings.get('autoplay', False)
+            self.settings['autoplay'] = not old_value
             self.autoplay_enabled = self.settings['autoplay']
+            logger.info(f"自动判定模式: {'开启' if old_value else '关闭'} -> {'开启' if self.autoplay_enabled else '关闭'}")
         elif option_index == 6:  # 错误报告
             # 切换错误报告状态
-            self.settings['error_reporting'] = not self.settings.get('error_reporting', True)
+            old_value = self.settings.get('error_reporting', True)
+            self.settings['error_reporting'] = not old_value
+            logger.info(f"错误报告: {'开启' if old_value else '关闭'} -> {'开启' if self.settings['error_reporting'] else '关闭'}")
             
         # 通知设置已更改
         self._notify_settings_changed()
@@ -191,7 +286,10 @@ class ANSITUIManager:
         通知设置已更改
         """
         if self.on_settings_changed:
+            logger.debug("触发设置更改回调")
             self.on_settings_changed(self.settings)
+        else:
+            logger.debug("设置已更改，但没有注册回调函数")
     
     def set_charts(self, charts: List[Dict[str, str]]) -> None:
         """
@@ -203,6 +301,9 @@ class ANSITUIManager:
         self.available_charts = charts
         self.selected_chart_index = 0
         self.current_page = 0
+        logger.info(f"设置谱面列表: 共 {len(charts)} 个谱面")
+        for i, chart in enumerate(charts):
+            logger.debug(f"  谱面 {i+1}: {chart.get('name', 'Unknown')} - Level {chart.get('level', 'N/A')}")
     
     def _get_visible_charts(self) -> List[Dict[str, str]]:
         """
@@ -213,22 +314,51 @@ class ANSITUIManager:
         """
         start_idx = self.current_page * self.charts_per_page
         end_idx = start_idx + self.charts_per_page
-        return self.available_charts[start_idx:end_idx]
+        visible = self.available_charts[start_idx:end_idx]
+        logger.debug(f"获取可见谱面: 页面 {self.current_page + 1}, 显示 {len(visible)} 个谱面 (索引 {start_idx} 到 {end_idx})")
+        return visible
     
     def previous_chart_page(self) -> None:
         """翻到上一页谱面"""
         if self.current_page > 0:
+            old_page = self.current_page
             self.current_page -= 1
             # 更新选中的索引到当前页面的第一个，方便用户连续翻页浏览
             self.selected_chart_index = 0
+            logger.info(f"翻到上一页: {old_page + 1} -> {self.current_page + 1}")
+        else:
+            logger.debug("已经在第一页，无法继续翻页")
     
     def next_chart_page(self) -> None:
         """翻到下一页谱面"""
         total_pages = max(1, (len(self.available_charts) + self.charts_per_page - 1) // self.charts_per_page)
         if self.current_page < total_pages - 1:
+            old_page = self.current_page
             self.current_page += 1
             # 更新选中的索引到当前页面的第一个
             self.selected_chart_index = 0
+            logger.info(f"翻到下一页: {old_page + 1} -> {self.current_page + 1} (共 {total_pages} 页)")
+        else:
+            logger.debug(f"已经在最后一页 ({total_pages})，无法继续翻页")
+    
+    def _get_display_width(self, text: str) -> int:
+        """
+        计算文本在终端中的显示宽度
+        中文字符占2个宽度，英文字符占1个宽度
+        
+        Args:
+            text (str): 要计算的文本
+            
+        Returns:
+            int: 文本的显示宽度
+        """
+        width = 0
+        for char in text:
+            if '\u4e00' <= char <= '\u9fff':  # 中文字符范围
+                width += 2
+            else:
+                width += 1
+        return width
     
     def _draw_trg_title(self, y: int, x: int) -> None:
         """
@@ -268,13 +398,17 @@ class ANSITUIManager:
         # 清屏
         self._clear_screen()
         
-        # 绘制TRG标题在右上角
+        # 计算整体布局居中
+        content_width = max(len(self.TRG_ASCII_ART[0]), 40)  # 标题宽度或谱面列表宽度
+        content_start_x = max(0, (self.screen_width - content_width) // 2)
+        
+        # 绘制TRG标题居中
         title_y = 2
-        title_x = max(0, self.screen_width - len(self.TRG_ASCII_ART[0]) - 2)
+        title_x = max(0, content_start_x + (content_width - len(self.TRG_ASCII_ART[0])) // 2)
         self._draw_trg_title(title_y, title_x)
         
-        # 绘制谱面列表在右侧
-        charts_start_x = max(0, self.screen_width - 40)  # 谱面列表起始X坐标
+        # 绘制谱面列表居中
+        charts_start_x = max(0, content_start_x + (content_width - 40) // 2)  # 谱面列表起始X坐标
         charts_y = title_y + len(self.TRG_ASCII_ART) + 2
         visible_charts = self._get_visible_charts()
         
@@ -335,12 +469,14 @@ class ANSITUIManager:
                     # 格式化为 "难度名称-等级"
                     level_text = f"{difficulty_name}-{level}"
                     basic_info_text = f"选中: {selected_chart['name']} | {level_text}"
-                    self._print_at(info_y, charts_start_x, self.COLOR_CODES['info'] + basic_info_text + self.COLOR_CODES['reset'])
+                    basic_info_x = max(0, (self.screen_width - len(basic_info_text)) // 2)  # 居中显示
+                    self._print_at(info_y, basic_info_x, self.COLOR_CODES['info'] + basic_info_text + self.COLOR_CODES['reset'])
                     
                     # 添加更多基本信息（如果有空间）
                     if info_y + 1 < self.screen_height - 4:
                         maker_info_text = f"谱面: {selected_chart['maker']} | 音乐: {selected_chart.get('song_maker', '未知')}"
-                        self._print_at(info_y + 1, charts_start_x, self.COLOR_CODES['info'] + maker_info_text + self.COLOR_CODES['reset'])
+                        maker_info_x = max(0, (self.screen_width - len(maker_info_text)) // 2)  # 居中显示
+                        self._print_at(info_y + 1, maker_info_x, self.COLOR_CODES['info'] + maker_info_text + self.COLOR_CODES['reset'])
                     
                     # 显示最高成绩（如果有空间）
                     if save_manager and info_y + 2 < self.screen_height - 3:
@@ -349,7 +485,9 @@ class ANSITUIManager:
                             best_score = save_manager.get_best_score_raw(chart_id)
                             
                             # 应用颜色到文本
-                            self._print_at(info_y + 2, charts_start_x, self.COLOR_CODES['highlight'] + "最高成绩:" + self.COLOR_CODES['reset'])
+                            best_score_title = "最高成绩:"
+                            best_score_title_x = max(0, (self.screen_width - len(best_score_title)) // 2)  # 居中显示
+                            self._print_at(info_y + 2, best_score_title_x, self.COLOR_CODES['highlight'] + best_score_title + self.COLOR_CODES['reset'])
                             if best_score:
                                 score = best_score.get('score', 0)
                                 grade = best_score.get('grade', '无')
@@ -358,16 +496,22 @@ class ANSITUIManager:
                                 formatted_score = f"{score:,}"  # 添加千位分隔符
                                 
                                 # 只显示总分和等级
-                                self._print_at(info_y + 3, charts_start_x, self.COLOR_CODES['highlight'] + f"{grade} - {formatted_score}" + self.COLOR_CODES['reset'])
+                                score_text = f"{grade} - {formatted_score}"
+                                score_text_x = max(0, (self.screen_width - len(score_text)) // 2)  # 居中显示
+                                self._print_at(info_y + 3, score_text_x, self.COLOR_CODES['highlight'] + score_text + self.COLOR_CODES['reset'])
                             else:
-                                self._print_at(info_y + 3, charts_start_x, self.COLOR_CODES['foreground'] + "暂无成绩记录" + self.COLOR_CODES['reset'])
+                                no_record_text = "暂无成绩记录"
+                                no_record_x = max(0, (self.screen_width - len(no_record_text)) // 2)  # 居中显示
+                                self._print_at(info_y + 3, no_record_x, self.COLOR_CODES['foreground'] + no_record_text + self.COLOR_CODES['reset'])
                         except Exception as e:
                             # 如果获取成绩出错，仍然显示基本信息
                             pass
                 except Exception as e:
                     # 即使发生错误，也尝试显示最基本的选中信息
                     try:
-                        self._print_at(info_y, charts_start_x, self.COLOR_CODES['info'] + f"选中: {selected_chart['name']}" + self.COLOR_CODES['reset'])
+                        basic_info_text = f"选中: {selected_chart['name']}"
+                        basic_info_x = max(0, (self.screen_width - len(basic_info_text)) // 2)  # 居中显示
+                        self._print_at(info_y, basic_info_x, self.COLOR_CODES['info'] + basic_info_text + self.COLOR_CODES['reset'])
                     except:
                         pass
         
@@ -377,14 +521,14 @@ class ANSITUIManager:
             page_info_y = info_y + 4  # 在详细信息下方显示页码
             if page_info_y < self.screen_height - 3:
                 page_text = f"页码: {self.current_page + 1}/{total_pages}"
-                page_x = max(0, charts_start_x)
+                page_x = max(0, (self.screen_width - len(page_text)) // 2)  # 居中显示
                 self._print_at(page_info_y, page_x, self.COLOR_CODES['highlight'] + page_text + self.COLOR_CODES['reset'])
         
         # 绘制底部帮助信息
         help_y = self.screen_height - 2
         if help_y > 0:
             help_text = "上下方向键:选择谱面 | 左右方向键:翻页 | 回车键:开始游戏 | ESC键:退出 | DEL键:设置"
-            help_x = max(0, (self.screen_width - len(help_text)) // 2)
+            help_x = max(0, (self.screen_width - self._get_display_width(help_text)) // 2)
             self._print_at(help_y, help_x, self.COLOR_CODES['foreground'] + help_text + self.COLOR_CODES['reset'])
         
         # 刷新输出
@@ -606,7 +750,17 @@ class ANSITUIManager:
         Args:
             state (UIState): 要设置的UI状态
         """
+        state_names = {
+            self.UIState.MAIN_MENU: "MAIN_MENU",
+            self.UIState.GAME_PLAY: "GAME_PLAY",
+            self.UIState.GAME_PAUSED: "GAME_PAUSED",
+            self.UIState.GAME_RESULT: "GAME_RESULT",
+            self.UIState.SETTINGS: "SETTINGS"
+        }
+        old_state = state_names.get(self.current_state, "UNKNOWN")
+        new_state = state_names.get(state, "UNKNOWN")
         self.current_state = state
+        logger.info(f"UI状态切换: {old_state} -> {new_state}")
     
     def set_on_chart_select_callback(self, callback: Callable) -> None:
         """
@@ -657,6 +811,14 @@ class ANSITUIManager:
             'max_combo': max_combo,
             'accuracy': accuracy
         }
+        logger.info("=" * 60)
+        logger.info("游戏结算数据")
+        logger.info("=" * 60)
+        logger.info(f"分数: {score:,}")
+        logger.info(f"Perfect: {perfect}, Good: {good}, Bad: {bad}, Miss: {miss}")
+        logger.info(f"最大连击: {max_combo}")
+        logger.info(f"准确率: {accuracy:.2f}%")
+        logger.info("=" * 60)
     
     def _get_grade_by_score(self, score: int) -> str:
         """

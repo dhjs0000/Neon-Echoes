@@ -9,7 +9,10 @@ import pygame
 import time
 import os
 import logging
+import tempfile
+import io
 from typing import Optional, Dict
+from pydub import AudioSegment
 
 # 配置日志
 logger = logging.getLogger('NeonEchoes.AudioManager')
@@ -53,6 +56,10 @@ class AudioManager:
         self.notes_sfx: Dict[str, pygame.mixer.Sound] = {}  # 存储note音效
         self.sfx_volume = 1.0  # 音效音量（0.0到1.0之间）
         
+        # 预解码相关变量
+        self.pcm_buffer: Optional[io.BytesIO] = None  # 预解码的PCM数据缓冲区
+        self.temp_pcm_file: Optional[str] = None  # 临时PCM文件路径
+        
         # 尝试初始化pygame.mixer模块
         try:
             pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
@@ -64,9 +71,54 @@ class AudioManager:
             logger.info("游戏将在无音频模式下运行")
             self.audio_available = False
     
+    def _predecode_to_pcm(self, filepath: str) -> Optional[str]:
+        """
+        将音频文件预解码为PCM格式，避免运行时解码卡顿
+        
+        Args:
+            filepath (str): 原始音频文件路径
+            
+        Returns:
+            Optional[str]: 临时PCM文件路径，如果失败则返回None
+        """
+        logger.info(f"开始预解码音频文件: {filepath}")
+        start_time = time.time()
+        
+        try:
+            # 使用pydub加载音频文件
+            audio = AudioSegment.from_file(filepath)
+            
+            # 转换为pygame支持的格式：44100Hz, 16bit, 立体声
+            audio = audio.set_frame_rate(44100).set_sample_width(2).set_channels(2)
+            
+            # 创建临时文件
+            temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+            temp_file.close()
+            
+            # 导出为WAV格式（PCM）
+            audio.export(temp_file.name, format='wav')
+            
+            elapsed_time = (time.time() - start_time) * 1000
+            logger.info(f"预解码完成: {filepath} -> {temp_file.name}, 耗时: {elapsed_time:.2f}ms")
+            
+            return temp_file.name
+        except Exception as e:
+            logger.error(f"预解码失败: {e}")
+            return None
+    
+    def _cleanup_pcm(self):
+        """清理临时PCM文件"""
+        if self.temp_pcm_file and os.path.exists(self.temp_pcm_file):
+            try:
+                os.unlink(self.temp_pcm_file)
+                logger.info(f"清理临时PCM文件: {self.temp_pcm_file}")
+                self.temp_pcm_file = None
+            except Exception as e:
+                logger.warning(f"清理临时PCM文件失败: {e}")
+    
     def load_music(self, filepath: str) -> bool:
         """
-        加载音乐文件
+        加载音乐文件（带预解码）
         
         Args:
             filepath (str): 音乐文件的路径
@@ -87,10 +139,23 @@ class AudioManager:
             logger.error(f"错误: 文件不存在 - {filepath}")
             return False
         
+        # 清理之前的临时PCM文件
+        self._cleanup_pcm()
+        
         try:
-            # Windows环境下中文文件名处理增强
-            # 使用原始文件路径尝试加载
-            pygame.mixer.music.load(filepath)
+            # 预解码为PCM格式
+            pcm_file = self._predecode_to_pcm(filepath)
+            
+            if pcm_file:
+                # 使用预解码的PCM文件
+                pygame.mixer.music.load(pcm_file)
+                self.temp_pcm_file = pcm_file
+                logger.info(f"使用预解码PCM文件: {pcm_file}")
+            else:
+                # 预解码失败，回退到原始文件
+                logger.warning("预解码失败，使用原始文件加载")
+                pygame.mixer.music.load(filepath)
+            
             self.music_loaded = True
             self.music_playing = False
             self.reset_time_variables()
@@ -103,7 +168,13 @@ class AudioManager:
             if abs_path != filepath:
                 logger.info(f"尝试使用绝对路径: {abs_path}")
                 try:
-                    pygame.mixer.music.load(abs_path)
+                    # 尝试预解码绝对路径
+                    pcm_file = self._predecode_to_pcm(abs_path)
+                    if pcm_file:
+                        pygame.mixer.music.load(pcm_file)
+                        self.temp_pcm_file = pcm_file
+                    else:
+                        pygame.mixer.music.load(abs_path)
                     self.music_loaded = True
                     self.music_playing = False
                     self.reset_time_variables()
@@ -193,6 +264,8 @@ class AudioManager:
             self.music_loaded = False
             self.music_playing = False
             self.reset_time_variables()
+            # 清理临时PCM文件
+            self._cleanup_pcm()
         except pygame.error as e:
             logger.error(f"停止音乐播放失败: {e}")
     

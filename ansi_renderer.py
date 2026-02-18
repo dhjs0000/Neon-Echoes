@@ -7,8 +7,30 @@ Neon Echoes - ANSI渲染器模块
 
 import os
 import sys
+import logging
 from typing import Optional, Dict, List, Tuple
 from game_engine import GameState, JudgementResult, NoteType
+
+# 配置日志
+logger = logging.getLogger('NeonEchoes.ANSIRenderer')
+logger.setLevel(logging.DEBUG)
+
+# 清除现有的处理器
+if logger.handlers:
+    logger.handlers.clear()
+
+# 创建文件处理器 - 使用覆盖模式('w')
+log_file = os.path.join(os.path.dirname(__file__), 'logs', 'renderer_log.log')
+file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
+file_handler.setLevel(logging.DEBUG)
+
+# 设置日志格式
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+
+# 添加处理器到logger
+logger.addHandler(file_handler)
+logger.info("ANSIRenderer 日志系统初始化完成")
 
 
 class ANSIRenderer:
@@ -51,73 +73,123 @@ class ANSIRenderer:
         Args:
             game_state (GameState): 游戏状态对象的引用
         """
+        logger.info("=" * 60)
+        logger.info("ANSIRenderer 初始化开始")
+        logger.info("=" * 60)
+        
         self.game_state = game_state
+        logger.debug(f"游戏状态对象已绑定: {type(game_state).__name__}")
         
         # 获取终端尺寸
         self.screen_height, self.screen_width = self._get_terminal_size()
+        logger.info(f"终端尺寸: {self.screen_width}x{self.screen_height}")
         
         # 游戏区域配置
         self.num_tracks = 10  # 轨道数量
         self.judgement_line_y = self.screen_height - 5  # 判定线的y坐标
+        logger.debug(f"游戏区域配置: num_tracks={self.num_tracks}, judgement_line_y={self.judgement_line_y}")
         
         # 动态计算轨道宽度和间距，使总宽度与屏幕宽度相等
         self._calculate_track_dimensions()
+        logger.info(f"轨道尺寸: track_width={self.track_width}, track_spacing={self.track_spacing}")
         
         # 音符配置
         self.note_visible_time = 2000  # 音符在屏幕上显示的总时间（毫秒）
         self.time_offset = 0  # 时间偏移量，用于微调音符显示位置（毫秒）
+        logger.debug(f"音符配置: note_visible_time={self.note_visible_time}ms, time_offset={self.time_offset}ms")
         
         # 判定窗口可视化配置
         self.show_judgement_windows = False  # 是否显示判定窗口范围
         
         # 缓存轨道位置信息
         self._cache_track_positions()
+        logger.debug(f"轨道位置缓存完成: {len(self.track_positions)} 个轨道")
         
         # 屏幕缓冲区
         self.screen_buffer = [[' ' for _ in range(self.screen_width)] for _ in range(self.screen_height)]
         self.color_buffer = [[self.COLOR_CODES['reset'] for _ in range(self.screen_width)] for _ in range(self.screen_height)]
+        logger.debug(f"屏幕缓冲区初始化: {self.screen_width}x{self.screen_height}")
+        
+        logger.info("=" * 60)
+        logger.info("ANSIRenderer 初始化完成")
+        logger.info("=" * 60)
     
     def _get_terminal_size(self) -> Tuple[int, int]:
         """获取终端尺寸"""
+        logger.debug("获取终端尺寸...")
         try:
             if os.name != 'nt':
                 # Unix/Linux/Mac
                 rows, columns = os.popen('stty size', 'r').read().split()
-                return int(rows), int(columns)
+                size = (int(rows), int(columns))
+                logger.info(f"Unix/Linux/Mac 终端尺寸: {size[1]}x{size[0]}")
+                return size
             else:
                 # Windows
                 import ctypes
+                from ctypes import wintypes
+                
                 kernel32 = ctypes.windll.kernel32
                 handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
-                csbi = ctypes.create_string_buffer(22)
-                kernel32.GetConsoleScreenBufferInfo(handle, csbi)
-                rows = csbi[10] - csbi[9]  # srWindow.Bottom - srWindow.Top + 1
-                columns = csbi[12] - csbi[11]  # srWindow.Right - srWindow.Left + 1
-                return rows, columns
-        except:
+                
+                # 定义 CONSOLE_SCREEN_BUFFER_INFO 结构
+                class COORD(ctypes.Structure):
+                    _fields_ = [("X", wintypes.SHORT), ("Y", wintypes.SHORT)]
+                
+                class SMALL_RECT(ctypes.Structure):
+                    _fields_ = [("Left", wintypes.SHORT), ("Top", wintypes.SHORT),
+                               ("Right", wintypes.SHORT), ("Bottom", wintypes.SHORT)]
+                
+                class CONSOLE_SCREEN_BUFFER_INFO(ctypes.Structure):
+                    _fields_ = [("dwSize", COORD), ("dwCursorPosition", COORD),
+                               ("wAttributes", wintypes.WORD), ("srWindow", SMALL_RECT),
+                               ("dwMaximumWindowSize", COORD)]
+                
+                csbi = CONSOLE_SCREEN_BUFFER_INFO()
+                kernel32.GetConsoleScreenBufferInfo(handle, ctypes.byref(csbi))
+                
+                # 计算窗口尺寸
+                rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1
+                columns = csbi.srWindow.Right - csbi.srWindow.Left + 1
+                size = (rows, columns)
+                logger.info(f"Windows 终端尺寸: {size[1]}x{size[0]}")
+                return size
+        except Exception as e:
             # 如果获取失败，返回较大的默认值
-            return 40, 120
+            logger.warning(f"获取终端尺寸失败: {e}, 使用默认值 160x40")
+            return 40, 160
 
     def update_terminal_size(self) -> None:
         """更新终端尺寸"""
+        logger.info("更新终端尺寸...")
+        old_width, old_height = self.screen_width, self.screen_height
         self.screen_height, self.screen_width = self._get_terminal_size()
+        
+        if old_width != self.screen_width or old_height != self.screen_height:
+            logger.info(f"终端尺寸变化: {old_width}x{old_height} -> {self.screen_width}x{self.screen_height}")
+        else:
+            logger.debug("终端尺寸未变化")
+            
         self.judgement_line_y = self.screen_height - 5
         self._calculate_track_dimensions()
         self._cache_track_positions()
         # 重新初始化屏幕缓冲区
         self.screen_buffer = [[' ' for _ in range(self.screen_width)] for _ in range(self.screen_height)]
         self.color_buffer = [[self.COLOR_CODES['reset'] for _ in range(self.screen_width)] for _ in range(self.screen_height)]
+        logger.debug("屏幕缓冲区已重新初始化")
     
     def _calculate_track_dimensions(self) -> None:
         """动态计算轨道宽度和间距，使总宽度与屏幕宽度相等或相近"""
         # 确保屏幕宽度有效
         if self.screen_width <= 0:
+            logger.warning(f"屏幕宽度无效 ({self.screen_width})，使用默认轨道尺寸")
             self.track_width = 6
             self.track_spacing = 2
             return
 
         # 计算可用总宽度（减去边界占用的字符）
         total_width_needed = self.screen_width - 4  # 留出一点余量
+        logger.debug(f"计算轨道尺寸: screen_width={self.screen_width}, total_width_needed={total_width_needed}")
 
         # 计算轨道宽度：总宽度减去所有轨道间距后的平均宽度
         # 轨道间距数量 = 轨道数量 - 1
@@ -129,21 +201,26 @@ class ANSIRenderer:
         # 计算基础轨道宽度
         available_track_width = total_width_needed - (spacing_count * min_spacing)
         base_track_width = available_track_width // self.num_tracks
+        logger.debug(f"基础轨道宽度计算: available_track_width={available_track_width}, base_track_width={base_track_width}")
 
         # 根据屏幕宽度动态调整轨道宽度
         if self.screen_width >= 120:
             # 大窗口：使用较宽的轨道
             self.track_width = max(5, base_track_width)
+            logger.debug(f"大窗口模式: track_width={self.track_width}")
         elif self.screen_width >= 80:
             # 中等窗口：使用中等宽度
             self.track_width = max(4, base_track_width)
+            logger.debug(f"中等窗口模式: track_width={self.track_width}")
         else:
             # 小窗口：使用较窄的轨道
             self.track_width = max(3, base_track_width)
+            logger.debug(f"小窗口模式: track_width={self.track_width}")
 
         # 重新计算轨道间距，使总宽度与屏幕宽度尽量接近
         actual_total_width = self.num_tracks * self.track_width
         remaining_space = total_width_needed - actual_total_width
+        logger.debug(f"轨道间距计算: actual_total_width={actual_total_width}, remaining_space={remaining_space}")
 
         if spacing_count > 0:
             # 在轨道之间均匀分配剩余空间
@@ -152,15 +229,29 @@ class ANSIRenderer:
             self.track_spacing = max(min_spacing, self.track_spacing)
         else:
             self.track_spacing = 0
+        
+        # 减小2格轨道宽度，使整体居中更好
+        self.track_width = max(2, self.track_width - 2)
+        
+        logger.debug(f"轨道尺寸计算完成: track_width={self.track_width}, track_spacing={self.track_spacing}")
     
     def _cache_track_positions(self) -> None:
         """缓存轨道位置信息，提高渲染性能"""
         # 首先重新计算轨道尺寸
         self._calculate_track_dimensions()
         
+        # 计算所有轨道的总宽度
+        total_tracks_width = self.num_tracks * self.track_width + (self.num_tracks - 1) * self.track_spacing
+        
+        # 计算居中偏移量
+        start_x = (self.screen_width - total_tracks_width) // 2
+        start_x = max(0, start_x)  # 确保不为负数
+        
+        logger.debug(f"轨道居中计算: total_tracks_width={total_tracks_width}, screen_width={self.screen_width}, start_x={start_x}")
+        
         self.track_positions = []
         for i in range(self.num_tracks):
-            track_left = i * (self.track_width + self.track_spacing)
+            track_left = start_x + i * (self.track_width + self.track_spacing)
             track_right = track_left + self.track_width - 1
             track_center = (track_left + track_right) // 2
             
@@ -171,6 +262,8 @@ class ANSIRenderer:
                 'inner_left': track_left + 1,
                 'inner_right': track_right - 1
             })
+        
+        logger.debug(f"轨道位置缓存完成: {len(self.track_positions)} 个轨道, 起始位置={start_x}")
     
     def _time_to_y_position(self, note_time: int) -> Optional[int]:
         """
@@ -236,11 +329,10 @@ class ANSIRenderer:
         return y_pos
     
     def _clear_screen_buffer(self) -> None:
-        """清空屏幕缓冲区"""
-        for y in range(self.screen_height):
-            for x in range(self.screen_width):
-                self.screen_buffer[y][x] = ' '
-                self.color_buffer[y][x] = self.COLOR_CODES['reset']
+        """清空屏幕缓冲区 - 优化版本：使用列表推导式快速重置"""
+        reset_color = self.COLOR_CODES['reset']
+        self.screen_buffer = [[' ' for _ in range(self.screen_width)] for _ in range(self.screen_height)]
+        self.color_buffer = [[reset_color for _ in range(self.screen_width)] for _ in range(self.screen_height)]
     
     def _set_char(self, y: int, x: int, char: str, color: str = '') -> None:
         """
@@ -271,14 +363,35 @@ class ANSIRenderer:
                 self._set_char(y, track_pos['right'], self.CHAR_CONFIG['track_border'], track_color)
     
     def draw_notes(self) -> None:
-        """绘制当前活跃的音符"""
+        """绘制当前活跃的音符 - 优化版本：预过滤时间窗口内的音符"""
+        # 获取谱面速度设置
+        chart_speed = getattr(self.game_state, 'speed', 5.0) if hasattr(self.game_state, 'speed') else 5.0
+        base_pre_display_ms = 3000
+        pre_display_time_ms = int(base_pre_display_ms * (5.0 / chart_speed))
+        
+        # 计算时间窗口：只处理即将显示和正在显示的音符
+        current_time = self.game_state.current_time_ms
+        time_window_start = current_time - 500  # 稍微提前一点，处理刚刚过去的音符
+        time_window_end = current_time + pre_display_time_ms + 500  # 预显示时间 + 缓冲
+        
+        # 快速过滤需要处理的音符
+        notes_to_render = []
         for note in self.game_state.notes:
+            if time_window_start <= note.perfect_time <= time_window_end:
+                notes_to_render.append(note)
+        
+        note_count = len(self.game_state.notes)
+        visible_count = 0
+        
+        for note in notes_to_render:
             # 计算音符的Y坐标
             y_pos = self._time_to_y_position(note.perfect_time)
             
             # 如果音符不在可视范围内，跳过
             if y_pos is None:
                 continue
+            
+            visible_count += 1
             
             # 选择音符颜色和字符
             if note.type == NoteType.HOLD:
@@ -371,6 +484,9 @@ class ANSIRenderer:
                         # 确保字符在轨道范围内
                         if track_pos['inner_left'] <= x_pos <= track_pos['inner_right']:
                             self._set_char(y_pos, x_pos, char, color_code)
+        
+        if note_count > 0:
+            logger.debug(f"音符绘制统计: 总数 {note_count}, 可见 {visible_count}")
     
     def draw_hud(self) -> None:
         """绘制游戏顶部的HUD（平视显示器），显示分数、连击数和上一次判定结果"""
@@ -410,7 +526,8 @@ class ANSIRenderer:
                 'color': 'debug'  # 使用调试颜色
             })
         
-        # 绘制所有HUD元素
+        # 绘制所有HUD元素（y=1，往下移动一行）
+        hud_y = 0
         for element in hud_elements:
             text = element['text']
             color = self.COLOR_CODES[element['color']]
@@ -426,18 +543,27 @@ class ANSIRenderer:
             # 绘制文本
             for i, char in enumerate(text):
                 if x + i < self.screen_width:
-                    self._set_char(0, x + i, char, color)
+                    self._set_char(hud_y, x + i, char, color)
     
     def draw_judgement_line(self) -> None:
         """绘制底部的判定线"""
-        # 生成判定线字符串
-        line_length = min(self.screen_width, self.num_tracks * (self.track_width + self.track_spacing) - self.track_spacing)
+        # 计算轨道区域的起始和结束位置
+        if self.track_positions:
+            track_start = self.track_positions[0]['left']
+            track_end = self.track_positions[-1]['right']
+            line_length = track_end - track_start + 1
+            start_x = track_start
+        else:
+            # 如果没有轨道位置缓存，使用默认计算
+            line_length = min(self.screen_width, self.num_tracks * (self.track_width + self.track_spacing) - self.track_spacing)
+            start_x = 0
+        
         judgement_line = self.CHAR_CONFIG['judgement_line'] * line_length
         
         # 绘制判定线
         color = self.COLOR_CODES['judgement_line']
         for i, char in enumerate(judgement_line):
-            self._set_char(self.judgement_line_y, i, char, color)
+            self._set_char(self.judgement_line_y, start_x + i, char, color)
     
     def draw_text_events(self) -> None:
         """绘制当前应该显示的文字事件"""
@@ -475,11 +601,14 @@ class ANSIRenderer:
     def refresh(self) -> None:
         """刷新整个游戏画面"""
         try:
+            logger.debug(f"刷新游戏画面: 当前时间 {self.game_state.current_time_ms}ms")
+            
             # 重新获取屏幕尺寸（以防用户调整了终端窗口大小）
             new_height, new_width = self._get_terminal_size()
             
             # 如果屏幕尺寸发生变化，更新配置
             if new_height != self.screen_height or new_width != self.screen_width:
+                logger.info(f"检测到终端尺寸变化: {self.screen_width}x{self.screen_height} -> {new_width}x{new_height}")
                 self.screen_height, self.screen_width = new_height, new_width
                 self.judgement_line_y = self.screen_height - 5  # 更新判定线位置
                 self._cache_track_positions()  # 重新缓存轨道位置
@@ -490,41 +619,58 @@ class ANSIRenderer:
             
             # 清空屏幕缓冲区
             self._clear_screen_buffer()
+            logger.debug("屏幕缓冲区已清空")
             
             # 绘制所有游戏元素
             self.draw_background()
+            logger.debug("背景绘制完成")
+            
             self.draw_notes()
+            logger.debug(f"音符绘制完成: 活跃音符数 {len(self.game_state.notes)}")
+            
             self.draw_judgement_line()
+            logger.debug("判定线绘制完成")
+            
             self.draw_text_events()
+            logger.debug("文字事件绘制完成")
+            
             self.draw_hud()
+            logger.debug("HUD绘制完成")
             
             # 输出到终端
             self._render_to_terminal()
+            logger.debug("画面渲染完成")
             
         except Exception as e:
             # 错误处理，确保程序不会崩溃
-            pass
+            logger.error(f"刷新画面时发生错误: {e}", exc_info=True)
     
     def _render_to_terminal(self) -> None:
-        """将屏幕缓冲区渲染到终端"""
-        # 清屏
-        sys.stdout.write('\033[2J\033[H')  # ANSI清屏和光标回到左上角
+        """将屏幕缓冲区渲染到终端 - 优化版本：批量输出，减少系统调用"""
+        # 使用列表收集所有输出，最后一次性写入
+        output_lines = []
+        output_lines.append('\033[2J\033[H')  # ANSI清屏和光标回到左上角
         
         # 渲染每一行
         for y in range(self.screen_height):
-            line = ''
+            line_parts = []
             current_color = ''
             for x in range(self.screen_width):
                 char_color = self.color_buffer[y][x]
                 if char_color != current_color:
-                    line += char_color
+                    line_parts.append(char_color)
                     current_color = char_color
-                line += self.screen_buffer[y][x]
+                line_parts.append(self.screen_buffer[y][x])
             
-            # 输出行并重置颜色
-            sys.stdout.write(line + self.COLOR_CODES['reset'] + '\n')
+            # 添加行并重置颜色
+            line_parts.append(self.COLOR_CODES['reset'])
+            if y < self.screen_height - 1:
+                line_parts.append('\n')
+            
+            output_lines.append(''.join(line_parts))
         
-        # 刷新输出
+        # 一次性输出所有内容，减少系统调用次数
+        sys.stdout.write(''.join(output_lines))
         sys.stdout.flush()
     
     def draw_game_result(self, perfect: int, good: int, miss: int, accuracy: float, score: int, max_combo: int, autoplay: bool = False) -> None:
