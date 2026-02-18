@@ -58,7 +58,14 @@ class ThreadedInputHandler:
         
         # 性能监控
         self._last_check_time = time.time()
-        self._check_interval = 0.001  # 1ms检查间隔（1000Hz轮询率）
+        # 优化：降低轮询频率到120Hz（8.33ms间隔），减少CPU占用
+        # 120Hz对于音游输入已经足够，500Hz会造成过多的系统调用开销
+        self._check_interval = 0.0083  # 8.3ms检查间隔（约120Hz轮询率）
+        self._menu_check_interval = 0.033  # 菜单状态下30Hz（33ms）足够
+        self._current_interval = self._check_interval
+        
+        # 游戏状态感知
+        self._game_state = 'menu'  # 'menu' 或 'gameplay'
         
         logger.info("ThreadedInputHandler 初始化完成")
     
@@ -78,6 +85,22 @@ class ThreadedInputHandler:
         if self._input_thread and self._input_thread.is_alive():
             self._input_thread.join(timeout=0.1)
         logger.info("输入处理线程已停止")
+    
+    def set_game_state(self, state: str) -> None:
+        """
+        设置游戏状态，动态调整轮询频率
+        
+        Args:
+            state: 'menu' 或 'gameplay'
+        """
+        if state != self._game_state:
+            self._game_state = state
+            if state == 'gameplay':
+                self._current_interval = self._check_interval  # 120Hz
+                logger.debug("输入轮询切换到高频模式 (120Hz)")
+            else:
+                self._current_interval = self._menu_check_interval  # 30Hz
+                logger.debug("输入轮询切换到低频模式 (30Hz)")
     
     def _input_loop(self) -> None:
         """输入处理主循环（在独立线程中运行）"""
@@ -165,9 +188,9 @@ class ThreadedInputHandler:
                             track_index = self.key_mapping[key]
                             self.on_key_up(key, track_index)
             
-            # 控制轮询频率
+            # 控制轮询频率 - 使用动态间隔
             elapsed = time.time() - loop_start
-            sleep_time = self._check_interval - elapsed
+            sleep_time = self._current_interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
     

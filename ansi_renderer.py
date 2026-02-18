@@ -110,9 +110,27 @@ class ANSIRenderer:
         self.color_buffer = [[self.COLOR_CODES['reset'] for _ in range(self.screen_width)] for _ in range(self.screen_height)]
         logger.debug(f"屏幕缓冲区初始化: {self.screen_width}x{self.screen_height}")
         
+        # 优化：预计算HOLD音符渐变颜色，避免每帧重复计算
+        self._hold_gradient_colors = self._precompute_hold_gradient_colors()
+        logger.debug("HOLD音符渐变颜色预计算完成")
+        
         logger.info("=" * 60)
         logger.info("ANSIRenderer 初始化完成")
         logger.info("=" * 60)
+    
+    def _precompute_hold_gradient_colors(self) -> Dict[str, str]:
+        """
+        预计算HOLD音符的渐变颜色
+        返回两个字典：正常颜色和暗色（用于渐变效果）
+        """
+        hold_color = self.COLOR_CODES['note_hold']
+        # 预计算两种颜色状态：正常亮度和暗亮度
+        # 使用ANSI转义序列的亮度控制
+        # \033[2m 是暗亮度，\033[22m 是正常亮度
+        return {
+            'normal': hold_color,
+            'dim': '\033[2m' + hold_color,
+        }
     
     def _get_terminal_size(self) -> Tuple[int, int]:
         """获取终端尺寸"""
@@ -329,10 +347,16 @@ class ANSIRenderer:
         return y_pos
     
     def _clear_screen_buffer(self) -> None:
-        """清空屏幕缓冲区 - 优化版本：使用列表推导式快速重置"""
+        """清空屏幕缓冲区 - 优化版本：直接重置内容，避免重新创建列表"""
         reset_color = self.COLOR_CODES['reset']
-        self.screen_buffer = [[' ' for _ in range(self.screen_width)] for _ in range(self.screen_height)]
-        self.color_buffer = [[reset_color for _ in range(self.screen_width)] for _ in range(self.screen_height)]
+        space_char = ' '
+        
+        for y in range(self.screen_height):
+            row = self.screen_buffer[y]
+            color_row = self.color_buffer[y]
+            for x in range(self.screen_width):
+                row[x] = space_char
+                color_row[x] = reset_color
     
     def _set_char(self, y: int, x: int, char: str, color: str = '') -> None:
         """
@@ -349,18 +373,27 @@ class ANSIRenderer:
             self.color_buffer[y][x] = color
     
     def draw_background(self) -> None:
-        """绘制游戏背景，包括4条固定轨道的边界"""
+        """绘制游戏背景，包括4条固定轨道的边界 - 优化版本：直接操作缓冲区"""
+        border_char = self.CHAR_CONFIG['track_border']
+        
         # 绘制轨道背景和边界
         for i, track_pos in enumerate(self.track_positions):
             # 获取轨道颜色（如果轨道被激活则使用激活颜色）
             track_color = self.COLOR_CODES['track_active'] if (i < len(self.game_state.tracks) and self.game_state.tracks[i].activated) else self.COLOR_CODES['track']
             
-            # 绘制轨道边界
+            left = track_pos['left']
+            right = track_pos['right']
+            
+            # 优化：直接操作缓冲区，减少函数调用开销
             for y in range(self.screen_height):
+                row_buffer = self.screen_buffer[y]
+                color_row = self.color_buffer[y]
                 # 左边界
-                self._set_char(y, track_pos['left'], self.CHAR_CONFIG['track_border'], track_color)
+                row_buffer[left] = border_char
+                color_row[left] = track_color
                 # 右边界
-                self._set_char(y, track_pos['right'], self.CHAR_CONFIG['track_border'], track_color)
+                row_buffer[right] = border_char
+                color_row[right] = track_color
     
     def draw_notes(self) -> None:
         """绘制当前活跃的音符 - 优化版本：预过滤时间窗口内的音符"""
@@ -434,25 +467,28 @@ class ANSIRenderer:
                     else:
                         note_height = 1
                     
+                    # 优化：使用预计算的渐变颜色，避免每帧重复计算
+                    gradient_colors = self._hold_gradient_colors
+                    
                     # 绘制HOLD音符的完整长度，实现颜色渐变效果
+                    # 优化：计算渐变阈值行（30%位置）
+                    dim_threshold = max(1, int(note_height * 0.3))
+                    
                     for h in range(note_height):
                         current_y = y_pos - h
                         if current_y < 0:  # 确保不超出屏幕顶部
                             break
                         
-                        # 计算颜色透明度（离初始音符越远，颜色越浅）
-                        # 距离比例：h / note_height，0表示初始位置，1表示最远位置
-                        distance_ratio = h / note_height if note_height > 1 else 0
-                        # 根据距离调整颜色深浅
-                        # 使用ANSI颜色的亮度控制（22m是默认亮度，2m是暗亮度）
-                        # 越远越暗，使用不同的ANSI亮度代码
-                        brightness_code = f'\033[2m' if distance_ratio > 0.3 else ''
+                        # 优化：直接使用预计算的颜色，避免字符串拼接
+                        # 前30%使用正常亮度，后面使用暗亮度
+                        gradient_color = gradient_colors['normal'] if h < dim_threshold else gradient_colors['dim']
                         
-                        # 组合颜色代码
-                        gradient_color = brightness_code + color_code
-                        
+                        # 优化：直接操作缓冲区，减少函数调用开销
+                        row_buffer = self.screen_buffer[current_y]
+                        color_row = self.color_buffer[current_y]
                         for x in range(track_pos['inner_left'], track_pos['inner_right'] + 1):
-                            self._set_char(current_y, x, note_char, gradient_color)
+                            row_buffer[x] = note_char
+                            color_row[x] = gradient_color
                     
                     # 如果是长按音符且已被击中，绘制已按住的部分（使用填充字符）
                     if note.hit:
@@ -466,24 +502,33 @@ class ANSIRenderer:
                             if hold_y < 0:
                                 break
                             
-                            # 计算已按住部分的颜色透明度
-                            distance_ratio = h / note_height if note_height > 1 else 0
-                            brightness_code = f'\033[2m' if distance_ratio > 0.3 else ''
-                            gradient_color = brightness_code + color_code
+                            # 优化：直接使用预计算的颜色
+                            gradient_color = gradient_colors['normal'] if h < dim_threshold else gradient_colors['dim']
                             
+                            # 优化：直接操作缓冲区
+                            row_buffer = self.screen_buffer[hold_y]
+                            color_row = self.color_buffer[hold_y]
                             for x in range(track_pos['inner_left'], track_pos['inner_right'] + 1):
-                                self._set_char(hold_y, x, fill_char, gradient_color)
+                                row_buffer[x] = fill_char
+                                color_row[x] = gradient_color
                 else:
                     # 普通音符和拖动音符显示完整的多字符样式
                     # 计算起始位置，使音符居中显示在轨道内
                     start_x = track_pos['center'] - (len(note_char) // 2)
                     
+                    # 优化：直接操作缓冲区，减少函数调用开销
+                    row_buffer = self.screen_buffer[y_pos]
+                    color_row = self.color_buffer[y_pos]
+                    inner_left = track_pos['inner_left']
+                    inner_right = track_pos['inner_right']
+                    
                     # 绘制每个字符，确保不超出轨道边界
                     for i, char in enumerate(note_char):
                         x_pos = start_x + i
                         # 确保字符在轨道范围内
-                        if track_pos['inner_left'] <= x_pos <= track_pos['inner_right']:
-                            self._set_char(y_pos, x_pos, char, color_code)
+                        if inner_left <= x_pos <= inner_right:
+                            row_buffer[x_pos] = char
+                            color_row[x_pos] = color_code
         
         if note_count > 0:
             logger.debug(f"音符绘制统计: 总数 {note_count}, 可见 {visible_count}")
@@ -599,78 +644,84 @@ class ANSIRenderer:
                     self._set_char(text_y, text_x + i, char, self.COLOR_CODES['foreground'])
     
     def refresh(self) -> None:
-        """刷新整个游戏画面"""
+        """刷新整个游戏画面 - 优化版本：降低终端尺寸检查频率"""
         try:
-            logger.debug(f"刷新游戏画面: 当前时间 {self.game_state.current_time_ms}ms")
+            # 优化：每30帧检查一次终端尺寸（约每0.5秒@60fps），而不是每帧都检查
+            if not hasattr(self, '_frame_counter'):
+                self._frame_counter = 0
+            self._frame_counter += 1
             
-            # 重新获取屏幕尺寸（以防用户调整了终端窗口大小）
-            new_height, new_width = self._get_terminal_size()
-            
-            # 如果屏幕尺寸发生变化，更新配置
-            if new_height != self.screen_height or new_width != self.screen_width:
-                logger.info(f"检测到终端尺寸变化: {self.screen_width}x{self.screen_height} -> {new_width}x{new_height}")
-                self.screen_height, self.screen_width = new_height, new_width
-                self.judgement_line_y = self.screen_height - 5  # 更新判定线位置
-                self._cache_track_positions()  # 重新缓存轨道位置
+            if self._frame_counter >= 30:
+                self._frame_counter = 0
                 
-                # 重新创建缓冲区
-                self.screen_buffer = [[' ' for _ in range(self.screen_width)] for _ in range(self.screen_height)]
-                self.color_buffer = [[self.COLOR_CODES['reset'] for _ in range(self.screen_width)] for _ in range(self.screen_height)]
+                # 重新获取屏幕尺寸（以防用户调整了终端窗口大小）
+                new_height, new_width = self._get_terminal_size()
+                
+                # 如果屏幕尺寸发生变化，更新配置
+                if new_height != self.screen_height or new_width != self.screen_width:
+                    logger.info(f"检测到终端尺寸变化: {self.screen_width}x{self.screen_height} -> {new_width}x{new_height}")
+                    self.screen_height, self.screen_width = new_height, new_width
+                    self.judgement_line_y = self.screen_height - 5  # 更新判定线位置
+                    self._cache_track_positions()  # 重新缓存轨道位置
+                    
+                    # 重新创建缓冲区
+                    self.screen_buffer = [[' ' for _ in range(self.screen_width)] for _ in range(self.screen_height)]
+                    self.color_buffer = [[self.COLOR_CODES['reset'] for _ in range(self.screen_width)] for _ in range(self.screen_height)]
             
             # 清空屏幕缓冲区
             self._clear_screen_buffer()
-            logger.debug("屏幕缓冲区已清空")
             
             # 绘制所有游戏元素
             self.draw_background()
-            logger.debug("背景绘制完成")
-            
             self.draw_notes()
-            logger.debug(f"音符绘制完成: 活跃音符数 {len(self.game_state.notes)}")
-            
             self.draw_judgement_line()
-            logger.debug("判定线绘制完成")
-            
             self.draw_text_events()
-            logger.debug("文字事件绘制完成")
-            
             self.draw_hud()
-            logger.debug("HUD绘制完成")
             
             # 输出到终端
             self._render_to_terminal()
-            logger.debug("画面渲染完成")
             
         except Exception as e:
             # 错误处理，确保程序不会崩溃
             logger.error(f"刷新画面时发生错误: {e}", exc_info=True)
     
     def _render_to_terminal(self) -> None:
-        """将屏幕缓冲区渲染到终端 - 优化版本：批量输出，减少系统调用"""
-        # 使用列表收集所有输出，最后一次性写入
-        output_lines = []
-        output_lines.append('\033[2J\033[H')  # ANSI清屏和光标回到左上角
+        """将屏幕缓冲区渲染到终端 - 优化版本：使用预分配缓冲区，避免频繁创建对象"""
+        # 使用预分配的字符串列表（在实例初始化时创建）
+        if not hasattr(self, '_output_buffer'):
+            # 预分配输出缓冲区
+            self._output_buffer = [''] * (self.screen_height + 1)
+            self._line_buffer = [''] * (self.screen_width * 2 + 10)  # 预留足够空间
+        
+        # 清屏和光标复位
+        self._output_buffer[0] = '\033[2J\033[H'
         
         # 渲染每一行
         for y in range(self.screen_height):
-            line_parts = []
+            buffer_idx = 0
             current_color = ''
+            
             for x in range(self.screen_width):
                 char_color = self.color_buffer[y][x]
                 if char_color != current_color:
-                    line_parts.append(char_color)
+                    self._line_buffer[buffer_idx] = char_color
+                    buffer_idx += 1
                     current_color = char_color
-                line_parts.append(self.screen_buffer[y][x])
+                self._line_buffer[buffer_idx] = self.screen_buffer[y][x]
+                buffer_idx += 1
             
-            # 添加行并重置颜色
-            line_parts.append(self.COLOR_CODES['reset'])
+            # 添加行尾
+            self._line_buffer[buffer_idx] = self.COLOR_CODES['reset']
+            buffer_idx += 1
             if y < self.screen_height - 1:
-                line_parts.append('\n')
+                self._line_buffer[buffer_idx] = '\n'
+                buffer_idx += 1
             
-            output_lines.append(''.join(line_parts))
+            # 构建行字符串
+            self._output_buffer[y + 1] = ''.join(self._line_buffer[:buffer_idx])
         
-        # 一次性输出所有内容，减少系统调用次数
-        sys.stdout.write(''.join(output_lines))
+        # 一次性输出所有内容
+        sys.stdout.write(''.join(self._output_buffer[:self.screen_height + 1]))
         sys.stdout.flush()
     
     def draw_game_result(self, perfect: int, good: int, miss: int, accuracy: float, score: int, max_combo: int, autoplay: bool = False) -> None:

@@ -573,8 +573,12 @@ class NeonEchoes:
                     
                     # 根据当前状态更新界面
                     if self.tui_manager.current_state == ANSITUIManager.UIState.MAIN_MENU:
+                        # 优化：通知输入处理器切换到菜单模式（降低轮询频率）
+                        self.input_handler.set_game_state('menu')
                         self.tui_manager.draw_main_menu(save_manager=self.save_manager)
                     elif self.tui_manager.current_state == ANSITUIManager.UIState.GAME_PLAY:
+                        # 优化：通知输入处理器切换到游戏模式（提高轮询频率）
+                        self.input_handler.set_game_state('gameplay')
                         # 获取当前音频播放时间并更新游戏状态
                         current_audio_time = self.audio_manager.get_position()
                         # 确保即使没有音频或音频时间为0，也能正确更新游戏时间
@@ -616,17 +620,30 @@ class NeonEchoes:
                             # 切换到结算界面
                             self.tui_manager.set_state(ANSITUIManager.UIState.GAME_RESULT)
                     elif self.tui_manager.current_state == ANSITUIManager.UIState.GAME_PAUSED:
+                        # 暂停时也使用低频轮询
+                        self.input_handler.set_game_state('menu')
                         self.tui_manager.draw_game_paused()
                     elif self.tui_manager.current_state == ANSITUIManager.UIState.GAME_RESULT:
+                        # 结算界面使用低频轮询
+                        self.input_handler.set_game_state('menu')
                         self.tui_manager.draw_game_result()
                     elif self.tui_manager.current_state == ANSITUIManager.UIState.SETTINGS:
+                        # 设置界面使用低频轮询
+                        self.input_handler.set_game_state('menu')
                         self.tui_manager.draw_settings()
                     
-                    # 控制帧率 - 使用更精确的帧率控制
+                    # 控制帧率 - 优化：使用忙等待+sleep混合策略提高精度
                     elapsed = time.time() - frame_start_time
                     sleep_time = self.frame_time - elapsed
                     if sleep_time > 0:
-                        time.sleep(sleep_time)
+                        # 优化：对于大于2ms的等待，先sleep大部分，再忙等待剩余部分
+                        # 这样可以减少CPU占用，同时保持较高的定时精度
+                        if sleep_time > 0.002:
+                            time.sleep(sleep_time - 0.001)
+                        # 忙等待剩余时间（1ms以内），确保精确的帧率
+                        target_time = frame_start_time + self.frame_time
+                        while time.time() < target_time:
+                            pass
                     
                     # 记录帧时间用于性能监控
                     frame_end_time = time.time()
@@ -708,15 +725,21 @@ class NeonEchoes:
     
     def _handle_main_menu_input(self, key: str) -> None:
         """处理主菜单输入"""
+        need_redraw = False
+        
         if key.lower() == 'w' or key == '\x1b[A':  # 上移 (W键或上箭头)
             self.tui_manager.selected_chart_index = max(0, self.tui_manager.selected_chart_index - 1)
+            need_redraw = True
         elif key.lower() == 's' or key == '\x1b[B':  # 下移 (S键或下箭头)
             visible_charts = self.tui_manager._get_visible_charts()
             self.tui_manager.selected_chart_index = min(len(visible_charts) - 1, self.tui_manager.selected_chart_index + 1)
+            need_redraw = True
         elif key.lower() == 'a' or key == '\x1b[D':  # 上一页 (A键或左箭头)
             self.tui_manager.previous_chart_page()
+            need_redraw = True
         elif key.lower() == 'd' or key == '\x1b[C':  # 下一页 (D键或右箭头)
             self.tui_manager.next_chart_page()
+            need_redraw = True
         elif key == '\r' or key == '\n':  # 回车键
             # 选择当前谱面并开始游戏
             visible_charts = self.tui_manager._get_visible_charts()
@@ -729,8 +752,13 @@ class NeonEchoes:
         elif key == '\x7f':  # DEL键
             # 进入设置界面
             self.tui_manager.set_state(ANSITUIManager.UIState.SETTINGS)
+            need_redraw = True
         elif key.lower() == 'q' or key == '\x1b':  # ESC或Q键退出
             sys.exit(0)
+        
+        # 优化：如果需要重绘，设置脏标记
+        if need_redraw:
+            self.tui_manager._dirty_flags['main_menu'] = True
     
     def _handle_game_play_input(self, key: str) -> None:
         """处理游戏进行中输入"""

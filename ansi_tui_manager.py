@@ -170,6 +170,16 @@ class ANSITUIManager:
         self.on_result_action = None  # 结算界面操作的回调
         logger.debug("回调函数初始化完成")
         
+        # 优化：添加脏标记机制，避免不必要的重绘
+        self._dirty_flags = {
+            'main_menu': True,      # 主菜单需要重绘
+            'game_paused': True,    # 暂停菜单需要重绘
+            'game_result': True,    # 结算界面需要重绘
+            'settings': True,       # 设置界面需要重绘
+        }
+        self._last_state = None  # 上次渲染的状态
+        logger.debug("脏标记机制初始化完成")
+        
         logger.info("=" * 60)
         logger.info("ANSITUIManager 初始化完成")
         logger.info("=" * 60)
@@ -395,6 +405,13 @@ class ANSITUIManager:
     
     def draw_main_menu(self, save_manager=None) -> None:
         """绘制主菜单界面"""
+        # 优化：检查是否需要重绘
+        if not self._dirty_flags['main_menu'] and self._last_state == self.UIState.MAIN_MENU:
+            return
+        
+        self._dirty_flags['main_menu'] = False
+        self._last_state = self.UIState.MAIN_MENU
+        
         # 清屏
         self._clear_screen()
         
