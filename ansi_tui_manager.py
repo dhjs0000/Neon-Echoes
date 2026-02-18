@@ -778,6 +778,16 @@ class ANSITUIManager:
         new_state = state_names.get(state, "UNKNOWN")
         self.current_state = state
         logger.info(f"UI状态切换: {old_state} -> {new_state}")
+        
+        # 修复：切换状态时设置对应脏标记，确保界面被重绘
+        if state == self.UIState.MAIN_MENU:
+            self._dirty_flags['main_menu'] = True
+        elif state == self.UIState.GAME_PAUSED:
+            self._dirty_flags['game_paused'] = True
+        elif state == self.UIState.GAME_RESULT:
+            self._dirty_flags['game_result'] = True
+        elif state == self.UIState.SETTINGS:
+            self._dirty_flags['settings'] = True
     
     def set_on_chart_select_callback(self, callback: Callable) -> None:
         """

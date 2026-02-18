@@ -470,9 +470,16 @@ class ANSIRenderer:
                     # 优化：使用预计算的渐变颜色，避免每帧重复计算
                     gradient_colors = self._hold_gradient_colors
                     
+                    # 修复：HOLD音符应该像普通音符一样居中显示，而不是填满整个轨道
+                    # 计算HOLD音符的居中起始位置
+                    hold_start_x = track_pos['center'] - (len(note_char) // 2)
+                    
                     # 绘制HOLD音符的完整长度，实现颜色渐变效果
                     # 优化：计算渐变阈值行（30%位置）
                     dim_threshold = max(1, int(note_height * 0.3))
+                    
+                    inner_left = track_pos['inner_left']
+                    inner_right = track_pos['inner_right']
                     
                     for h in range(note_height):
                         current_y = y_pos - h
@@ -483,12 +490,14 @@ class ANSIRenderer:
                         # 前30%使用正常亮度，后面使用暗亮度
                         gradient_color = gradient_colors['normal'] if h < dim_threshold else gradient_colors['dim']
                         
-                        # 优化：直接操作缓冲区，减少函数调用开销
+                        # 修复：绘制HOLD音符字符（居中），而不是填满整个轨道
                         row_buffer = self.screen_buffer[current_y]
                         color_row = self.color_buffer[current_y]
-                        for x in range(track_pos['inner_left'], track_pos['inner_right'] + 1):
-                            row_buffer[x] = note_char
-                            color_row[x] = gradient_color
+                        for i, char in enumerate(note_char):
+                            x_pos = hold_start_x + i
+                            if inner_left <= x_pos <= inner_right:
+                                row_buffer[x_pos] = char
+                                color_row[x_pos] = gradient_color
                     
                     # 如果是长按音符且已被击中，绘制已按住的部分（使用填充字符）
                     if note.hit:
@@ -505,12 +514,14 @@ class ANSIRenderer:
                             # 优化：直接使用预计算的颜色
                             gradient_color = gradient_colors['normal'] if h < dim_threshold else gradient_colors['dim']
                             
-                            # 优化：直接操作缓冲区
+                            # 修复：绘制HOLD填充字符（居中）
                             row_buffer = self.screen_buffer[hold_y]
                             color_row = self.color_buffer[hold_y]
-                            for x in range(track_pos['inner_left'], track_pos['inner_right'] + 1):
-                                row_buffer[x] = fill_char
-                                color_row[x] = gradient_color
+                            for i, char in enumerate(fill_char):
+                                x_pos = hold_start_x + i
+                                if inner_left <= x_pos <= inner_right:
+                                    row_buffer[x_pos] = char
+                                    color_row[x_pos] = gradient_color
                 else:
                     # 普通音符和拖动音符显示完整的多字符样式
                     # 计算起始位置，使音符居中显示在轨道内
@@ -530,65 +541,61 @@ class ANSIRenderer:
                             row_buffer[x_pos] = char
                             color_row[x_pos] = color_code
         
-        if note_count > 0:
-            logger.debug(f"音符绘制统计: 总数 {note_count}, 可见 {visible_count}")
+        # 优化：移除每帧的debug日志，避免频繁创建临时字符串对象
+        # if note_count > 0:
+        #     logger.debug(f"音符绘制统计: 总数 {note_count}, 可见 {visible_count}")
     
     def draw_hud(self) -> None:
-        """绘制游戏顶部的HUD（平视显示器），显示分数、连击数和上一次判定结果"""
+        """绘制游戏顶部的HUD（平视显示器），显示分数、连击数和上一次判定结果 - 优化版本：减少临时对象创建"""
         # 获取要显示的信息
         score = self.game_state.score
         combo = self.game_state.combo
         max_combo = self.game_state.max_combo
         judgement = self.game_state.judgement
         
-        # 定义HUD元素
-        hud_elements = [
-            # 分数 - 左侧显示
-            {'text': f"SCORE: {score:,}", 'x': 0, 'color': 'score'},
-            # 连击数或AutoPlay - 居中显示
-            {'text': f"AutoPlay: {combo} (MAX: {max_combo})" if hasattr(self.game_state, 'autoplay') and self.game_state.autoplay else f"COMBO: {combo} (MAX: {max_combo})", 'x': 'center', 'color': 'combo'},
-        ]
+        hud_y = 0
         
-        # 如果有判定结果，添加到HUD元素中（右侧显示）
+        # 优化：直接绘制，避免创建临时列表和字典对象
+        # 绘制分数 - 左侧
+        score_text = f"SCORE: {score:,}"
+        score_color = self.COLOR_CODES['score']
+        for i, char in enumerate(score_text):
+            if i < self.screen_width:
+                self._set_char(hud_y, i, char, score_color)
+        
+        # 绘制连击数 - 居中
+        if hasattr(self.game_state, 'autoplay') and self.game_state.autoplay:
+            combo_text = f"AutoPlay: {combo} (MAX: {max_combo})"
+        else:
+            combo_text = f"COMBO: {combo} (MAX: {max_combo})"
+        combo_color = self.COLOR_CODES['combo']
+        combo_x = max(0, (self.screen_width - len(combo_text)) // 2)
+        for i, char in enumerate(combo_text):
+            if combo_x + i < self.screen_width:
+                self._set_char(hud_y, combo_x + i, char, combo_color)
+        
+        # 绘制判定结果 - 右侧
         if judgement:
-            hud_elements.append({
-                'text': judgement.value,
-                'x': 'right',
-                'color': f'judgement_{judgement.value.lower()}'
-            })
-            
-        # 如果启用了调试计时器，添加到HUD元素中
+            judgement_text = judgement.value
+            judgement_color_key = f'judgement_{judgement.value.lower()}'
+            judgement_color = self.COLOR_CODES.get(judgement_color_key, self.COLOR_CODES['reset'])
+            judgement_x = max(0, self.screen_width - len(judgement_text) - 1)
+            for i, char in enumerate(judgement_text):
+                if judgement_x + i < self.screen_width:
+                    self._set_char(hud_y, judgement_x + i, char, judgement_color)
+        
+        # 绘制调试计时器 - 最右侧（如果启用）
         if hasattr(self.game_state, 'debug_timer') and self.game_state.debug_timer:
             current_time = self.game_state.current_time_ms
-            # 格式化时间为 分:秒.毫秒
             minutes = current_time // 60000
             seconds = (current_time % 60000) // 1000
             milliseconds = current_time % 1000
-            timer_str = f"TIME: {minutes:02d}:{seconds:02d}.{milliseconds:03d}"
-            hud_elements.append({
-                'text': timer_str,
-                'x': self.screen_width - len(timer_str) - 1,  # 右侧显示
-                'color': 'debug'  # 使用调试颜色
-            })
-        
-        # 绘制所有HUD元素（y=1，往下移动一行）
-        hud_y = 0
-        for element in hud_elements:
-            text = element['text']
-            color = self.COLOR_CODES[element['color']]
-            
-            # 计算X坐标
-            if element['x'] == 'center':
-                x = max(0, (self.screen_width - len(text)) // 2)
-            elif element['x'] == 'right':
-                x = max(0, self.screen_width - len(text) - 1)
-            else:
-                x = max(0, min(element['x'], self.screen_width - len(text)))
-            
-            # 绘制文本
-            for i, char in enumerate(text):
-                if x + i < self.screen_width:
-                    self._set_char(hud_y, x + i, char, color)
+            timer_text = f"TIME: {minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+            timer_color = self.COLOR_CODES['debug']
+            timer_x = max(0, self.screen_width - len(timer_text) - 1)
+            for i, char in enumerate(timer_text):
+                if timer_x + i < self.screen_width:
+                    self._set_char(hud_y, timer_x + i, char, timer_color)
     
     def draw_judgement_line(self) -> None:
         """绘制底部的判定线"""

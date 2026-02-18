@@ -392,7 +392,7 @@ class AudioManager:
     
     def play_note_sfx(self, sfx_name: str) -> None:
         """
-        播放指定的note音效
+        播放指定的note音效 - 优化版本：添加防重复机制，避免密集音符导致的卡顿
         
         Args:
             sfx_name (str): 音效名称（不包含扩展名）
@@ -403,6 +403,18 @@ class AudioManager:
         # 当延迟的绝对值大于200ms时，禁用notes音效
         if abs(self.music_delay) > 200:
             return
+        
+        # 优化：添加音效播放节流机制，避免同一帧内多次播放同一音效导致卡顿
+        current_time = time.time()
+        if not hasattr(self, '_last_sfx_play_time'):
+            self._last_sfx_play_time = {}
+        
+        # 检查同一音效是否在10ms内已经播放过（防止密集音符导致的连续播放）
+        last_play_time = self._last_sfx_play_time.get(sfx_name, 0)
+        if current_time - last_play_time < 0.01:  # 10ms节流窗口
+            return
+        
+        self._last_sfx_play_time[sfx_name] = current_time
         
         try:
             # 播放音效（只播放一次，不循环）

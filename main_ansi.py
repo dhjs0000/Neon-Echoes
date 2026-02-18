@@ -13,8 +13,13 @@ import logging
 import traceback
 import datetime
 import platform
+import gc
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set
+
+# 优化：调整GC参数，减少随机卡顿
+# 增加GC阈值，让GC不那么频繁地执行
+gc.set_threshold(700, 10, 10)
 
 # 导入多线程输入处理器
 from input_handler import ThreadedInputHandler, InputEvent
@@ -101,6 +106,7 @@ class NeonEchoes:
         self.fps = self.settings.get('fps', 60)  # 目标帧率
         self.frame_time = 1.0 / self.fps  # 每帧的时间（秒）
         self.is_paused = False  # 游戏暂停状态
+        self._should_exit = False  # 修复：添加退出标志位
         
         # 初始化logger
         self.logger = logging.getLogger('NeonEchoes.MainANSI')
@@ -557,10 +563,14 @@ class NeonEchoes:
             # 初始化性能监控
             self._frame_times = []
             
-            while True:
+            while not self._should_exit:
                 # 记录帧开始时间
                 frame_start_time = time.time()
                 try:
+                    # 修复：检查退出标志位
+                    if self._should_exit:
+                        break
+                    
                     # 处理输入事件（从多线程输入处理器）
                     # 获取所有待处理的输入事件
                     while not self.input_handler.event_queue.empty():
@@ -568,8 +578,15 @@ class NeonEchoes:
                             event = self.input_handler.event_queue.get_nowait()
                             if event.event_type == InputEvent.KEY_DOWN:
                                 self._handle_input(event.key)
+                                # 修复：处理输入后检查退出标志位
+                                if self._should_exit:
+                                    break
                         except:
                             break
+                    
+                    # 修复：再次检查退出标志位
+                    if self._should_exit:
+                        break
                     
                     # 根据当前状态更新界面
                     if self.tui_manager.current_state == ANSITUIManager.UIState.MAIN_MENU:
@@ -727,6 +744,9 @@ class NeonEchoes:
         """处理主菜单输入"""
         need_redraw = False
         
+        # 调试：记录按键值
+        # self.logger.debug(f"主菜单按键: repr={repr(key)}, hex={key.encode().hex() if key else 'None'}")
+        
         if key.lower() == 'w' or key == '\x1b[A':  # 上移 (W键或上箭头)
             self.tui_manager.selected_chart_index = max(0, self.tui_manager.selected_chart_index - 1)
             need_redraw = True
@@ -754,7 +774,8 @@ class NeonEchoes:
             self.tui_manager.set_state(ANSITUIManager.UIState.SETTINGS)
             need_redraw = True
         elif key.lower() == 'q' or key == '\x1b':  # ESC或Q键退出
-            sys.exit(0)
+            # 修复：使用标志位优雅退出，而不是直接sys.exit
+            self._should_exit = True
         
         # 优化：如果需要重绘，设置脏标记
         if need_redraw:

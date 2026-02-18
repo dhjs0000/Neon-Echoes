@@ -789,8 +789,10 @@ class GameState:
             logger.warning(f"Invalid action: {action}")
             return None
         
-        # 更新音符缓存
-        self._update_notes_cache_impl()
+        # 优化：延迟更新音符缓存，避免每次按键都重建缓存
+        # 缓存将在update方法中统一更新，减少重复计算
+        if self._update_notes_cache:
+            self._update_notes_cache_impl()
         
         # 获取该轨道上的所有未击中音符
         track_notes = self._notes_by_track[track_index]
