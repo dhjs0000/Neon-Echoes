@@ -333,8 +333,8 @@ class ChartParser:
                             except ValueError:
                                 logger.warning(f"Invalid duration format in hold note: {line}")
                         
-                        # 确保speed存在，否则使用默认值
-                        speed = self.metadata.get('speed', 12.0)
+                        # 确保speed存在，否则使用默认值（与metadata默认值保持一致）
+                        speed = self.metadata.get('speed', 5.0)
                         duration_ms = int(duration_lines * 1000 / speed)
                         
                         # 计算音符的预计判定时间

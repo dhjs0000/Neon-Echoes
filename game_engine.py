@@ -133,8 +133,20 @@ class Note:
             # 普通音符和拖动音符：已击中或时间超过判定窗口
             return self.hit or current_time > self.perfect_time + 200  # 200ms是MISS判定窗口
         else:
-            # 长按音符：已击中且按住时间达到持续时间，或时间超过判定窗口
-            return (self.hit and self.held_time >= self.duration) or current_time > self.perfect_time + 200
+            # 修复：HOLD音符的完成条件
+            # 1. 已击中且按住时间达到持续时间 → 完成
+            # 2. 未击中且时间超过判定窗口 → MISS，完成
+            # 3. 已击中但被判定为MISS/BAD → 完成（立即消失）
+            # 4. 已击中且还在按住，时间未到持续时间 → 未完成
+            if self.hit:
+                # 已击中：检查是否完成整个按住过程或已被判定为MISS/BAD
+                if self.judgement in [JudgementResult.MISS, JudgementResult.BAD]:
+                    # MISS或BAD判定后立即完成
+                    return True
+                return self.held_time >= self.duration
+            else:
+                # 未击中：检查是否超过判定窗口
+                return current_time > self.perfect_time + 200
     
     def is_within_judgement_window(self, current_time: int, window_ms: int = 200) -> bool:
         """
@@ -600,8 +612,19 @@ class GameState:
         time_window_end = self.current_time_ms + 3000
         
         # 使用列表推导式快速过滤需要处理的音符
-        notes_to_process = [note for note in self.notes 
-                           if time_window_start <= note.perfect_time <= time_window_end]
+        # 修复：对于HOLD音符，需要考虑其持续时间
+        notes_to_process = []
+        for note in self.notes:
+            if note.type == NoteType.HOLD:
+                # HOLD音符：检查整个持续时间段是否与处理窗口重叠
+                hold_start = note.perfect_time
+                hold_end = note.perfect_time + note.duration
+                if hold_start <= time_window_end and hold_end >= time_window_start:
+                    notes_to_process.append(note)
+            else:
+                # 普通音符：只检查perfect_time
+                if time_window_start <= note.perfect_time <= time_window_end:
+                    notes_to_process.append(note)
         
         for note in notes_to_process:
             try:
@@ -666,6 +689,27 @@ class GameState:
             # 检查是否应该判定为MISS
             if not note.hit and self.current_time_ms > note.perfect_time + 200:  # 200ms是MISS判定窗口
                 self._judge_miss(note)
+    
+    def _is_worse_judgement(self, new: JudgementResult, old: JudgementResult) -> bool:
+        """
+        判断新判定是否比旧判定更差
+        
+        判定等级（从好到差）：PERFECT > GOOD > BAD > MISS
+        
+        Args:
+            new: 新判定
+            old: 旧判定
+            
+        Returns:
+            bool: 新判定是否比旧判定更差
+        """
+        judgement_order = {
+            JudgementResult.PERFECT: 0,
+            JudgementResult.GOOD: 1,
+            JudgementResult.BAD: 2,
+            JudgementResult.MISS: 3
+        }
+        return judgement_order[new] > judgement_order[old]
     
     def _check_game_over(self) -> None:
         """
@@ -771,16 +815,34 @@ class GameState:
             # 检查是否有HOLD音符在该轨道上并且已经开始判定但未完成
             for note in self.notes:
                 if note.type == NoteType.HOLD and note.track_index == track_index and note.hit and not note.is_complete(self.current_time_ms):
-                    # 如果在HOLD音符结束前松开，则判定为BAD
-                    if note.judgement != JudgementResult.BAD:
-                        note.judgement = JudgementResult.BAD
-                        # 更新判定计数
-                        self.judgement_system.judgement_counts[JudgementResult.BAD] += 1
-                        self.judgement = JudgementResult.BAD
+                    # 修复：根据按住比例判定，而不是直接BAD
+                    hold_progress = note.get_hold_progress()
+                    if hold_progress >= 0.8:
+                        # 按住80%以上，判定为PERFECT
+                        new_judgement = JudgementResult.PERFECT
+                    elif hold_progress >= 0.5:
+                        # 按住50%-80%，判定为GOOD
+                        new_judgement = JudgementResult.GOOD
+                    elif hold_progress >= 0.2:
+                        # 按住20%-50%，判定为BAD
+                        new_judgement = JudgementResult.BAD
+                    else:
+                        # 按住少于20%，判定为MISS
+                        new_judgement = JudgementResult.MISS
+                    
+                    # 只有当新判定比当前判定差时才更新（保持首击判定）
+                    if note.judgement is None or self._is_worse_judgement(new_judgement, note.judgement):
+                        # 更新判定计数（先减去旧的）
+                        if note.judgement in self.judgement_system.judgement_counts:
+                            self.judgement_system.judgement_counts[note.judgement] -= 1
+                        # 设置新判定
+                        note.judgement = new_judgement
+                        self.judgement_system.judgement_counts[new_judgement] += 1
+                        self.judgement = new_judgement
                         # 触发判定事件
                         if self.on_note_judged:
                             try:
-                                self.on_note_judged(note, JudgementResult.BAD)
+                                self.on_note_judged(note, new_judgement)
                             except Exception as e:
                                 logger.error(f"Error in note judged callback: {e}")
             

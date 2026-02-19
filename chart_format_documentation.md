@@ -300,19 +300,4 @@ drag-7
 
 ---
 
-## 文件位置
 
-谱面文件应放在 `charts/` 目录下，音频文件放在 `audio/` 目录下。
-
-```
-项目目录/
-├── charts/
-│   ├── rush e.chart
-│   ├── 死别.chart
-│   └── 自定义谱面.chart
-├── audio/
-│   ├── Rush E.mp3
-│   ├── 死别.mp3
-│   └── example.mp3
-└── ...
-```

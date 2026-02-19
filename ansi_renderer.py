@@ -408,17 +408,37 @@ class ANSIRenderer:
         time_window_end = current_time + pre_display_time_ms + 500  # 预显示时间 + 缓冲
         
         # 快速过滤需要处理的音符
+        # 修复：对于HOLD音符，需要考虑其持续时间
         notes_to_render = []
         for note in self.game_state.notes:
-            if time_window_start <= note.perfect_time <= time_window_end:
-                notes_to_render.append(note)
+            # 普通音符：检查perfect_time是否在窗口内
+            # HOLD音符：检查整个持续时间段是否与窗口重叠
+            if note.type == NoteType.HOLD:
+                # HOLD音符的开始和结束时间
+                hold_start = note.perfect_time
+                hold_end = note.perfect_time + note.duration
+                # 检查HOLD音符的时间段是否与渲染窗口重叠
+                if hold_start <= time_window_end and hold_end >= time_window_start:
+                    notes_to_render.append(note)
+            else:
+                # 普通音符和DRAG音符：只检查perfect_time
+                if time_window_start <= note.perfect_time <= time_window_end:
+                    notes_to_render.append(note)
         
         note_count = len(self.game_state.notes)
         visible_count = 0
         
         for note in notes_to_render:
             # 计算音符的Y坐标
-            y_pos = self._time_to_y_position(note.perfect_time)
+            # 修复：对于HOLD音符，只有已击中且头部过了判定窗口时才固定在判定线
+            if note.type == NoteType.HOLD:
+                # 先正常计算Y坐标
+                y_pos = self._time_to_y_position(note.perfect_time)
+                # 只有已击中的HOLD音符头部过了判定窗口才固定显示
+                if y_pos is None and note.hit:
+                    y_pos = self.judgement_line_y
+            else:
+                y_pos = self._time_to_y_position(note.perfect_time)
             
             # 如果音符不在可视范围内，跳过
             if y_pos is None:
@@ -450,19 +470,19 @@ class ANSIRenderer:
                 
                 # 计算音符在轨道中的显示
                 if note.type == NoteType.HOLD:
-                    # 直接使用谱面定义的speed参数来计算hold音符长度
-                    # 获取游戏状态中的speed设置，如果没有则使用默认值6.0
-                    speed = getattr(self.game_state, 'speed', 6.0) if hasattr(self.game_state, 'speed') else 6.0
+                    # 修复：HOLD音符高度直接由duration_ms决定
+                    # duration_ms是谱面中定义的长度（毫秒）
+                    # 游戏使用固定的视觉速度来显示音符下落
+                    # 视觉速度：每1000ms显示speed行
+                    visual_speed = getattr(self.game_state, 'speed', 5.0) if hasattr(self.game_state, 'speed') else 5.0
                     
-                    # 直接根据音符时长和谱面speed计算应该渲染的行数
-                    # 音符时长转换为秒，乘以谱面speed（每秒行数）得到行数
-                    # 添加一个比例因子来调整长度，使其更符合预期
-                    scale_factor = 0.8  # 缩放因子，可根据需要调整
                     if note.duration > 0:
-                        # 音符时长（秒） × 谱面speed（行/秒） × 缩放因子 = 应该渲染的行数
-                        note_height = max(1, int((note.duration / 1000.0) * speed * scale_factor))
-                        # 设置最大行数限制，避免过长
-                        max_height = min(10, self.judgement_line_y - 5)  # 最多10行或屏幕可见区域的一部分
+                        # duration_ms毫秒 ÷ 1000 × visual_speed = 应该渲染的行数
+                        # 例如：duration=2000ms, speed=5行/秒 → 显示10行
+                        note_height = max(1, int((note.duration / 1000.0) * visual_speed))
+                        # 移除最大高度限制，让谱面制作者完全控制长度
+                        # 但保留一个合理的上限避免内存问题
+                        max_height = self.screen_height - 2  # 最多屏幕高度-2
                         note_height = min(note_height, max_height)
                     else:
                         note_height = 1
@@ -474,50 +494,72 @@ class ANSIRenderer:
                     # 计算HOLD音符的居中起始位置
                     hold_start_x = track_pos['center'] - (len(note_char) // 2)
                     
-                    # 绘制HOLD音符的完整长度，实现颜色渐变效果
                     # 优化：计算渐变阈值行（30%位置）
                     dim_threshold = max(1, int(note_height * 0.3))
                     
                     inner_left = track_pos['inner_left']
                     inner_right = track_pos['inner_right']
                     
-                    for h in range(note_height):
-                        current_y = y_pos - h
-                        if current_y < 0:  # 确保不超出屏幕顶部
-                            break
-                        
-                        # 优化：直接使用预计算的颜色，避免字符串拼接
-                        # 前30%使用正常亮度，后面使用暗亮度
-                        gradient_color = gradient_colors['normal'] if h < dim_threshold else gradient_colors['dim']
-                        
-                        # 修复：绘制HOLD音符字符（居中），而不是填满整个轨道
-                        row_buffer = self.screen_buffer[current_y]
-                        color_row = self.color_buffer[current_y]
-                        for i, char in enumerate(note_char):
-                            x_pos = hold_start_x + i
-                            if inner_left <= x_pos <= inner_right:
-                                row_buffer[x_pos] = char
-                                color_row[x_pos] = gradient_color
+                    # 修复：计算已按住的部分的高度
+                    hold_progress = min(note.held_time / note.duration, 1.0) if note.duration > 0 else 0.0
+                    hold_height = int(hold_progress * note_height)
                     
-                    # 如果是长按音符且已被击中，绘制已按住的部分（使用填充字符）
+                    # 判断是否是BAD/MISS（只有BAD/MISS才向下延伸）
+                    is_bad_miss = note.judgement in [JudgementResult.BAD, JudgementResult.MISS]
+                    
+                    # HOLD音符的显示逻辑
+                    # 未击中：整个音符正常下落
+                    # 已击中GOOD/PERFECT：只需要音符尾部收缩，不向下延伸
+                    # 已击中BAD/MISS：已按住部分向下延伸
                     if note.hit:
-                        # 计算长按音符已按住的部分的长度
-                        hold_progress = min(note.held_time / note.duration, 1.0) if note.duration > 0 else 0.0
-                        hold_height = int(hold_progress * note_height)
+                        # 计算音符尾部（未按住部分）的显示高度
+                        tail_height = note_height - hold_height
                         
-                        # 绘制已按住的部分，同样应用颜色渐变
-                        for h in range(hold_height):
-                            hold_y = y_pos - h
-                            if hold_y < 0:
+                        # 绘制音符尾部（从头部门置向上）
+                        if tail_height > 0:
+                            for h in range(tail_height):
+                                current_y = y_pos - 1 - h
+                                if current_y < 0:
+                                    break
+                                
+                                gradient_color = gradient_colors['normal'] if (h + hold_height) < dim_threshold else gradient_colors['dim']
+                                
+                                row_buffer = self.screen_buffer[current_y]
+                                color_row = self.color_buffer[current_y]
+                                for i, char in enumerate(note_char):
+                                    x_pos = hold_start_x + i
+                                    if inner_left <= x_pos <= inner_right:
+                                        row_buffer[x_pos] = char
+                                        color_row[x_pos] = gradient_color
+                        
+                        # 只有BAD/MISS才向下延伸
+                        if is_bad_miss:
+                            for h in range(hold_height):
+                                hold_y = y_pos + h
+                                if hold_y >= self.screen_height:
+                                    break
+                                
+                                gradient_color = gradient_colors['normal'] if h < dim_threshold else gradient_colors['dim']
+                                
+                                row_buffer = self.screen_buffer[hold_y]
+                                color_row = self.color_buffer[hold_y]
+                                for i, char in enumerate(fill_char):
+                                    x_pos = hold_start_x + i
+                                    if inner_left <= x_pos <= inner_right:
+                                        row_buffer[x_pos] = char
+                                        color_row[x_pos] = gradient_color
+                    else:
+                        # 未击中：整个音符正常下落
+                        for h in range(note_height):
+                            current_y = y_pos - h
+                            if current_y < 0:
                                 break
                             
-                            # 优化：直接使用预计算的颜色
                             gradient_color = gradient_colors['normal'] if h < dim_threshold else gradient_colors['dim']
                             
-                            # 修复：绘制HOLD填充字符（居中）
-                            row_buffer = self.screen_buffer[hold_y]
-                            color_row = self.color_buffer[hold_y]
-                            for i, char in enumerate(fill_char):
+                            row_buffer = self.screen_buffer[current_y]
+                            color_row = self.color_buffer[current_y]
+                            for i, char in enumerate(note_char):
                                 x_pos = hold_start_x + i
                                 if inner_left <= x_pos <= inner_right:
                                     row_buffer[x_pos] = char
