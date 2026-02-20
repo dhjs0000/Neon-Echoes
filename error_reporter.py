@@ -98,13 +98,26 @@ class ErrorReporter:
             '项目根目录': self.project_root
         }
 
+        # 尝试从主程序导入版本号
         try:
-            version_file = os.path.join(self.project_root, 'version.txt')
-            if os.path.exists(version_file):
-                with open(version_file, 'r', encoding='utf-8') as f:
-                    info['版本'] = f.read().strip()
-        except:
-            pass
+            import importlib.util
+            main_ansi_path = os.path.join(self.project_root, 'main_ansi.py')
+            if os.path.exists(main_ansi_path):
+                spec = importlib.util.spec_from_file_location("main_ansi", main_ansi_path)
+                main_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(main_module)
+                if hasattr(main_module, '__version__'):
+                    info['版本'] = main_module.__version__
+        except Exception as e:
+            logger.warning(f"无法从主程序获取版本号: {e}")
+            # 回退到 version.txt
+            try:
+                version_file = os.path.join(self.project_root, 'version.txt')
+                if os.path.exists(version_file):
+                    with open(version_file, 'r', encoding='utf-8') as f:
+                        info['版本'] = f.read().strip()
+            except:
+                pass
 
         return info
 

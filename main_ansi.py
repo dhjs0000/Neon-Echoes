@@ -5,6 +5,9 @@ Neon Echoes - ANSI版本主程序
 这个模块是游戏的入口点，使用ANSI转义序列进行渲染。
 """
 
+# 版本号定义
+__version__ = "0.2.0"
+
 import sys
 import os
 import time
@@ -39,6 +42,7 @@ def handle_startup_error(exc_type, exc_value, exc_traceback):
         error_log_path = os.path.join(logs_dir, 'startup_error.log')
         with open(error_log_path, 'w', encoding='utf-8') as f:
             f.write(f"时间: {datetime.datetime.now()}\n")
+            f.write(f"版本: {__version__}\n")
             f.write(f"错误类型: {exc_type.__name__}\n")
             f.write(f"错误信息: {exc_value}\n")
             f.write(f"堆栈跟踪:\n{error_msg}\n")
@@ -286,17 +290,43 @@ class NeonEchoes:
         Args:
             chart (Dict[str, str]): 选中的谱面信息
         """
+        import threading
+        
         self.logger.info(f"选择谱面: {chart}")
         self.selected_chart = chart
         
         # 加载选中的谱面
         if chart and 'id' in chart:
             self.logger.info(f"尝试加载谱面ID: {chart['id']}")
-            if self.load_chart(chart['id']):
-                # 确保应用当前的auto play和调试计时器设置
-                self.game_state.set_autoplay(self.settings.get('autoplay', False))
-                self.game_state.set_debug_timer(self.settings.get('debug_timer', False))
-                
+            
+            # 保存加载结果的共享变量
+            load_result = {'success': False}
+            
+            # 创建加载线程
+            def load_thread_func():
+                load_result['success'] = self.load_chart(chart['id'])
+                if load_result['success']:
+                    # 确保应用当前的auto play和调试计时器设置
+                    self.game_state.set_autoplay(self.settings.get('autoplay', False))
+                    self.game_state.set_debug_timer(self.settings.get('debug_timer', False))
+            
+            # 启动加载线程
+            load_thread = threading.Thread(target=load_thread_func)
+            load_thread.start()
+            
+            # 播放谱面加载动画（主界面右移+谱面左滑入）
+            self.logger.info("播放谱面加载动画")
+            self.tui_manager.play_chart_load_animation(
+                self.renderer, 
+                self.game_state, 
+                self.audio_manager
+            )
+            
+            # 等待加载完成（如果动画结束但加载还没完成）
+            load_thread.join()
+            
+            # 检查加载结果
+            if load_result['success']:
                 # 加载成功，进入游戏界面
                 self.logger.info("谱面加载成功，进入游戏界面")
                 self.tui_manager.set_state(ANSITUIManager.UIState.GAME_PLAY)
@@ -524,6 +554,9 @@ class NeonEchoes:
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(formatter)
         self.logger.addHandler(file_handler)
+        
+        # 记录版本号
+        self.logger.info(f"Neon Echoes 版本 {__version__}")
         
         # 添加游戏结束处理
         original_should_game_end = self.game_state.should_game_end
@@ -989,6 +1022,84 @@ class NeonEchoes:
             self.tui_manager.on_settings_changed(self.settings)
 
 
+def play_startup_animation(duration: float = 1.5) -> None:
+    r"""
+    播放启动动画 - 旋转字符 (/ - \ |)
+    
+    Args:
+        duration: 动画持续时间（秒）
+    """
+    import sys
+    import time
+    
+    # 清屏
+    sys.stdout.write('\033[2J\033[H')
+    sys.stdout.flush()
+    
+    # 旋转字符序列
+    spinner_chars = ['/', '-', '\\', '|']
+    
+    # 获取终端尺寸以居中显示
+    try:
+        if os.name != 'nt':
+            rows, columns = os.popen('stty size', 'r').read().split()
+            screen_height, screen_width = int(rows), int(columns)
+        else:
+            import ctypes
+            from ctypes import wintypes
+            
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.GetStdHandle(-11)
+            
+            class COORD(ctypes.Structure):
+                _fields_ = [("X", wintypes.SHORT), ("Y", wintypes.SHORT)]
+            
+            class SMALL_RECT(ctypes.Structure):
+                _fields_ = [("Left", wintypes.SHORT), ("Top", wintypes.SHORT),
+                           ("Right", wintypes.SHORT), ("Bottom", wintypes.SHORT)]
+            
+            class CONSOLE_SCREEN_BUFFER_INFO(ctypes.Structure):
+                _fields_ = [("dwSize", COORD), ("dwCursorPosition", COORD),
+                           ("wAttributes", wintypes.WORD), ("srWindow", SMALL_RECT),
+                           ("dwMaximumWindowSize", COORD)]
+            
+            csbi = CONSOLE_SCREEN_BUFFER_INFO()
+            kernel32.GetConsoleScreenBufferInfo(handle, ctypes.byref(csbi))
+            
+            screen_height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1
+            screen_width = csbi.srWindow.Right - csbi.srWindow.Left + 1
+    except:
+        screen_height, screen_width = 40, 160
+    
+    # 计算居中位置
+    center_y = screen_height // 2
+    center_x = screen_width // 2
+    
+    # 显示游戏名称
+    title = "Neon Echoes"
+    title_x = center_x - len(title) // 2
+    sys.stdout.write(f"\033[{center_y - 1};{title_x + 1}H\033[36m{title}\033[0m")
+    
+    # 动画循环
+    start_time = time.time()
+    char_index = 0
+    
+    while time.time() - start_time < duration:
+        # 在原地更新旋转字符
+        sys.stdout.write(f"\033[{center_y + 1};{center_x + 1}H\033[33m{spinner_chars[char_index]}\033[0m")
+        sys.stdout.flush()
+        
+        # 切换到下一个字符
+        char_index = (char_index + 1) % len(spinner_chars)
+        
+        # 短暂延迟
+        time.sleep(0.1)
+    
+    # 清屏
+    sys.stdout.write('\033[2J\033[H')
+    sys.stdout.flush()
+
+
 def main():
     """主函数"""
     import argparse
@@ -997,6 +1108,7 @@ def main():
     parser = argparse.ArgumentParser(description='Neon Echoes - 终端下落式音游')
     parser.add_argument('--chart', type=str, help='直接加载指定的谱面ID')
     parser.add_argument('-N', '--No_ANSI', action='store_true', help='不使用ANSI颜色渲染，只使用白色字符（提高兼容性）')
+    parser.add_argument('--no-animation', action='store_true', help='跳过启动动画')
     
     # 解析命令行参数
     args = parser.parse_args()
@@ -1008,6 +1120,10 @@ def main():
         tty.setcbreak(sys.stdin.fileno())
     
     try:
+        # 播放启动动画
+        if not args.no_animation:
+            play_startup_animation(duration=1.5)
+        
         # 创建并运行游戏
         use_ansi = not args.No_ANSI
         game = NeonEchoes(use_ansi=use_ansi)

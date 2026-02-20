@@ -2,7 +2,7 @@
 
 一个基于终端的音游，使用 ANSI 转义序列进行渲染。
 
-![版本](https://img.shields.io/badge/version-0.1.0-blue)
+![版本](https://img.shields.io/badge/version-0.2.0-blue)
 ![Python](https://img.shields.io/badge/python-3.8+-green)
 ![平台](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
 

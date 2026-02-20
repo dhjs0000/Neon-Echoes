@@ -871,3 +871,319 @@ class ANSITUIManager:
             return "C"
         else:
             return "F"
+    
+    def _calculate_track_dimensions_for_animation(self, screen_width: int) -> tuple:
+        """
+        根据窗口尺寸动态计算轨道宽度和间距
+        与 ANSIRenderer._calculate_track_dimensions 使用相同的逻辑
+        
+        Args:
+            screen_width: 屏幕宽度
+            
+        Returns:
+            tuple: (track_width, track_spacing, start_x)
+        """
+        num_tracks = 10
+        
+        # 确保屏幕宽度有效
+        if screen_width <= 0:
+            return 4, 2, 0
+        
+        # 计算可用总宽度（留出一点余量）
+        total_width_needed = screen_width - 4
+        
+        # 轨道间距数量 = 轨道数量 - 1
+        spacing_count = num_tracks - 1
+        min_spacing = 2
+        
+        # 计算基础轨道宽度
+        available_track_width = total_width_needed - (spacing_count * min_spacing)
+        base_track_width = available_track_width // num_tracks
+        
+        # 根据屏幕宽度动态调整轨道宽度
+        if screen_width >= 120:
+            track_width = max(5, base_track_width)
+        elif screen_width >= 80:
+            track_width = max(4, base_track_width)
+        else:
+            track_width = max(3, base_track_width)
+        
+        # 重新计算轨道间距
+        actual_total_width = num_tracks * track_width
+        remaining_space = total_width_needed - actual_total_width
+        
+        if spacing_count > 0:
+            track_spacing = min_spacing + (remaining_space // spacing_count)
+            track_spacing = max(min_spacing, track_spacing)
+        else:
+            track_spacing = 0
+        
+        # 减小2格轨道宽度，使整体居中更好
+        track_width = max(2, track_width - 2)
+        
+        # 计算居中偏移量
+        total_tracks_width = num_tracks * track_width + (num_tracks - 1) * track_spacing
+        start_x = (screen_width - total_tracks_width) // 2
+        start_x = max(0, start_x)
+        
+        return track_width, track_spacing, start_x
+    
+    def play_chart_load_animation(self, renderer, game_state, audio_manager) -> None:
+        """
+        播放谱面加载动画
+        主界面整体快速右移直到完全出画面，同时从左侧划入谱面（轨道和判定线）
+        等待完全划入2秒后才开始谱面
+        
+        Args:
+            renderer: ANSIRenderer实例，用于绘制游戏画面
+            game_state: GameState实例
+            audio_manager: AudioManager实例
+        """
+        import time
+        import sys
+        
+        logger.info("开始播放谱面加载动画")
+        
+        # 获取终端尺寸
+        screen_height = self.screen_height
+        screen_width = self.screen_width
+        
+        # 动画参数
+        animation_duration = 0.8  # 动画持续时间（秒）
+        settle_duration = 2.0     # 完全划入后等待时间（秒）
+        fps = 60                  # 动画帧率
+        frame_time = 1.0 / fps
+        
+        # 计算每帧移动的像素数
+        total_frames = int(animation_duration * fps)
+        
+        # 根据窗口尺寸动态计算轨道尺寸（与渲染器使用相同的逻辑）
+        track_width, track_spacing, start_x = self._calculate_track_dimensions_for_animation(screen_width)
+        num_tracks = 10
+        
+        # 计算轨道区域的总宽度和结束位置
+        total_tracks_width = num_tracks * track_width + (num_tracks - 1) * track_spacing
+        end_x = start_x + total_tracks_width - 1
+        
+        logger.info(f"动画轨道尺寸: width={track_width}, spacing={track_spacing}, start_x={start_x}, end_x={end_x}")
+        
+        frame_count = 0
+        
+        # 动画主循环
+        while frame_count < total_frames:
+            frame_start = time.time()
+            
+            # 清屏
+            sys.stdout.write('\033[2J\033[H')
+            
+            # 动画进度 (0.0 - 1.0)
+            progress = frame_count / total_frames
+            
+            # 主界面向右滑出的偏移量（从0到screen_width）
+            main_slide_out = int(screen_width * progress)
+            
+            # 谱面向左滑入的偏移量（从 -screen_width 到 0）
+            chart_slide_in = int(-screen_width * (1 - progress))
+            
+            # ========== 第一部分：绘制向右滑出的主界面（完整版） ==========
+            main_color = self.COLOR_CODES['title']
+            reset_color = self.COLOR_CODES['reset']
+            
+            # 计算整体布局居中
+            content_width = max(len(self.TRG_ASCII_ART[0]) if self.TRG_ASCII_ART else 0, 40)
+            content_start_x = max(0, (screen_width - content_width) // 2 + main_slide_out)
+            
+            # 1. 绘制完整的TRG艺术字标题
+            title_y = 2
+            title_x = max(0, content_start_x + (content_width - len(self.TRG_ASCII_ART[0])) // 2) if self.TRG_ASCII_ART else content_start_x
+            for i, line in enumerate(self.TRG_ASCII_ART):
+                if title_x < screen_width and title_y + i < screen_height:
+                    visible_start = max(0, -title_x)
+                    visible_end = min(len(line), screen_width - title_x)
+                    if visible_start < visible_end:
+                        visible_text = line[visible_start:visible_end]
+                        draw_x = max(0, title_x)
+                        self._print_at(title_y + i, draw_x, main_color + visible_text + reset_color)
+            
+            # 2. 绘制谱面列表标题
+            charts_start_x = max(0, content_start_x + (content_width - 40) // 2)
+            charts_y = title_y + len(self.TRG_ASCII_ART) + 2
+            list_title = "谱面列表"
+            list_title_x = max(0, charts_start_x + (40 - len(list_title)) // 2)
+            if list_title_x < screen_width and charts_y - 1 < screen_height:
+                self._print_at(charts_y - 1, list_title_x, self.COLOR_CODES['title'] + list_title + reset_color)
+            
+            # 3. 绘制谱面列表（显示当前选中的谱面和周围几个）
+            visible_charts = self._get_visible_charts()
+            for i, chart in enumerate(visible_charts):
+                y_pos = charts_y + i
+                if y_pos >= screen_height - 10 or y_pos < 0:
+                    break
+                
+                # 选择颜色（选中的谱面使用高亮色）
+                color = self.COLOR_CODES['menu_selected'] if i == self.selected_chart_index else self.COLOR_CODES['menu_item']
+                
+                # 格式化谱面信息
+                chart_info = f"{chart['name']:<20}"
+                if charts_start_x < screen_width:
+                    visible_start = max(0, -charts_start_x)
+                    visible_end = min(len(chart_info), screen_width - charts_start_x)
+                    if visible_start < visible_end:
+                        visible_text = chart_info[visible_start:visible_end]
+                        draw_x = max(0, charts_start_x)
+                        self._print_at(y_pos, draw_x, color + visible_text + reset_color)
+                
+                # 显示等级
+                level = chart['level']
+                difficulty_name = "未知"
+                if 'difficulty' in chart:
+                    match = re.search(r'\(([^)]+)\)', chart['difficulty'])
+                    if match:
+                        difficulty_name = match.group(1)
+                level_text = f"{difficulty_name}-{level}"
+                level_x = charts_start_x + 25
+                if level_x < screen_width:
+                    visible_start = max(0, -level_x)
+                    visible_end = min(len(level_text), screen_width - level_x)
+                    if visible_start < visible_end:
+                        visible_text = level_text[visible_start:visible_end]
+                        draw_x = max(0, level_x)
+                        self._print_at(y_pos, draw_x, color + visible_text + reset_color)
+            
+            # 4. 绘制选中谱面的详细信息
+            if visible_charts and 0 <= self.selected_chart_index < len(visible_charts):
+                selected_chart = visible_charts[self.selected_chart_index]
+                info_y = min(charts_y + len(visible_charts) + 1, screen_height - 5)
+                
+                if info_y > 0 and info_y < screen_height:
+                    # 基本信息
+                    level = selected_chart['level']
+                    difficulty_name = "未知"
+                    if 'difficulty' in selected_chart:
+                        match = re.search(r'\(([^)]+)\)', selected_chart['difficulty'])
+                        if match:
+                            difficulty_name = match.group(1)
+                    level_text = f"{difficulty_name}-{level}"
+                    basic_info_text = f"选中: {selected_chart['name']} | {level_text}"
+                    basic_info_x = max(0, (screen_width - len(basic_info_text)) // 2 + main_slide_out)
+                    if basic_info_x < screen_width:
+                        visible_start = max(0, -basic_info_x)
+                        visible_end = min(len(basic_info_text), screen_width - basic_info_x)
+                        if visible_start < visible_end:
+                            visible_text = basic_info_text[visible_start:visible_end]
+                            draw_x = max(0, basic_info_x)
+                            self._print_at(info_y, draw_x, self.COLOR_CODES['info'] + visible_text + reset_color)
+                    
+                    # 制作者信息
+                    if info_y + 1 < screen_height - 4:
+                        maker_info_text = f"谱面: {selected_chart['maker']} | 音乐: {selected_chart.get('song_maker', '未知')}"
+                        maker_info_x = max(0, (screen_width - len(maker_info_text)) // 2 + main_slide_out)
+                        if maker_info_x < screen_width:
+                            visible_start = max(0, -maker_info_x)
+                            visible_end = min(len(maker_info_text), screen_width - maker_info_x)
+                            if visible_start < visible_end:
+                                visible_text = maker_info_text[visible_start:visible_end]
+                                draw_x = max(0, maker_info_x)
+                                self._print_at(info_y + 1, draw_x, self.COLOR_CODES['info'] + visible_text + reset_color)
+            
+            # 5. 绘制底部帮助信息
+            help_y = screen_height - 2
+            if help_y > 0 and help_y < screen_height:
+                help_text = "上下方向键:选择谱面 | 左右方向键:翻页 | 回车键:开始游戏 | ESC键:退出 | DEL键:设置"
+                help_x = max(0, (screen_width - len(help_text)) // 2 + main_slide_out)
+                if help_x < screen_width:
+                    visible_start = max(0, -help_x)
+                    visible_end = min(len(help_text), screen_width - help_x)
+                    if visible_start < visible_end:
+                        visible_text = help_text[visible_start:visible_end]
+                        draw_x = max(0, help_x)
+                        self._print_at(help_y, draw_x, self.COLOR_CODES['foreground'] + visible_text + reset_color)
+            
+            # ========== 第二部分：绘制向左滑入的谱面 ==========
+            # 绘制轨道（从左侧划入效果）
+            border_char = '|'
+            track_color = '\033[37m'  # 白色
+            judgement_color = '\033[31m'  # 红色
+            
+            judgement_line_y = screen_height - 5
+            
+            # 计算当前轨道区域的范围（用于绘制连续的判定线）
+            current_start_x = start_x + chart_slide_in
+            current_end_x = end_x + chart_slide_in
+            
+            # 绘制轨道边界
+            for i in range(num_tracks):
+                track_left = start_x + i * (track_width + track_spacing) + chart_slide_in
+                track_right = track_left + track_width - 1
+                
+                # 只绘制在屏幕范围内的部分
+                if track_right < 0 or track_left >= screen_width:
+                    continue
+                
+                # 绘制轨道边界
+                for y in range(screen_height):
+                    if 0 <= track_left < screen_width:
+                        sys.stdout.write(f"\033[{y + 1};{track_left + 1}H{track_color}{border_char}{reset_color}")
+                    if 0 <= track_right < screen_width:
+                        sys.stdout.write(f"\033[{y + 1};{track_right + 1}H{track_color}{border_char}{reset_color}")
+            
+            # 绘制连续的判定线（贯穿所有轨道）
+            if 0 <= judgement_line_y < screen_height:
+                line_start = max(0, current_start_x)
+                line_end = min(screen_width - 1, current_end_x)
+                for x in range(line_start, line_end + 1):
+                    sys.stdout.write(f"\033[{judgement_line_y + 1};{x + 1}H{judgement_color}={reset_color}")
+            
+            # 绘制加载提示
+            loading_text = "Loading..."
+            loading_x = (screen_width - len(loading_text)) // 2
+            loading_y = screen_height // 2
+            sys.stdout.write(f"\033[{loading_y + 1};{loading_x + 1}H\033[33m{loading_text}\033[0m")
+            
+            sys.stdout.flush()
+            
+            # 控制帧率
+            frame_count += 1
+            elapsed = time.time() - frame_start
+            sleep_time = frame_time - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+        
+        # 动画完成，完全显示游戏界面
+        # 清屏并绘制完整的游戏界面
+        sys.stdout.write('\033[2J\033[H')
+        
+        # 绘制完整的轨道和判定线
+        judgement_line_y = screen_height - 5
+        
+        # 绘制轨道边界
+        for i in range(num_tracks):
+            track_left = start_x + i * (track_width + track_spacing)
+            track_right = track_left + track_width - 1
+            
+            # 绘制轨道边界
+            for y in range(screen_height):
+                sys.stdout.write(f"\033[{y + 1};{track_left + 1}H\033[37m|\033[0m")
+                sys.stdout.write(f"\033[{y + 1};{track_right + 1}H\033[37m|\033[0m")
+        
+        # 绘制连续的判定线（贯穿所有轨道）
+        for x in range(start_x, end_x + 1):
+            sys.stdout.write(f"\033[{judgement_line_y + 1};{x + 1}H\033[31m=\033[0m")
+        
+        # 显示"Ready"提示
+        ready_text = "Ready!"
+        ready_x = (screen_width - len(ready_text)) // 2
+        ready_y = screen_height // 2 - 2
+        sys.stdout.write(f"\033[{ready_y + 1};{ready_x + 1}H\033[32m{ready_text}\033[0m")
+        
+        sys.stdout.flush()
+        
+        # 等待2秒
+        logger.info(f"谱面加载动画完成，等待 {settle_duration} 秒")
+        time.sleep(settle_duration)
+        
+        # 最后清屏，准备开始游戏
+        sys.stdout.write('\033[2J\033[H')
+        sys.stdout.flush()
+        
+        logger.info("谱面加载动画结束")

@@ -141,3 +141,7 @@ error_reports/
 *.pyc
 *.pyo
 *.egg-info/
+
+
+# Neon Echoes
+version.txt

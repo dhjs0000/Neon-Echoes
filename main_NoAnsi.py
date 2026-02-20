@@ -7,6 +7,9 @@ Neon Echoes - 非ANSI版本主程序
 所有需要颜色识别的地方都使用视觉标识符来区分。
 """
 
+# 版本号定义
+__version__ = "0.2.0"
+
 import sys
 import os
 import time
@@ -511,7 +514,7 @@ class NeonEchoesNoAnsi:
         self.settings_selection = 0
 
         try:
-            self.logger.info("Neon Echoes NoAnsi 启动")
+            self.logger.info(f"Neon Echoes NoAnsi 版本 {__version__} 启动")
 
             while self.game_running or self.game_state.game_state in ["MENU", "SETTINGS", "CHART_SELECT", "RESULTS"]:
                 current_time = time.time()
@@ -582,6 +585,7 @@ def handle_startup_error(exc_type, exc_value, exc_traceback):
         error_log_path = os.path.join(logs_dir, 'startup_error.log')
         with open(error_log_path, 'w', encoding='utf-8') as f:
             f.write(f"时间: {datetime.datetime.now()}\n")
+            f.write(f"版本: {__version__}\n")
             f.write(f"错误类型: {exc_type.__name__}\n")
             f.write(f"错误信息: {exc_value}\n")
             f.write(f"堆栈跟踪:\n{error_msg}\n")
